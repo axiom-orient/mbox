@@ -1,0 +1,21 @@
+[package]
+name = "mbox"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "A fail-closed native command sandbox for macOS and Linux"
+license-file = "LICENSE"
+publish = false
+
+[[bin]]
+name = "mbox"
+path = "src/main.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

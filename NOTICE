@@ -1,0 +1,8 @@
+mbox
+
+The macOS Seatbelt policy structure was informed by the Apache-2.0 licensed
+OpenAI Codex sandbox implementation. The resulting policy in this repository
+is independently reduced to the mbox execution contract.
+
+Linux isolation delegates namespace and mount setup to Bubblewrap
+(LGPL-2.0-or-later), which is an external system executable and is not bundled.

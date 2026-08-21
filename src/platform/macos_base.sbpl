@@ -1,0 +1,56 @@
+(version 1)
+
+; Closed by default. Dynamic filesystem and optional network rules are appended.
+(deny default)
+
+; The target and descendants remain in the same sandbox.
+(allow process-exec)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+
+; Standard descriptors and terminal operation.
+(allow file-read-data (literal "/dev/stdin"))
+(allow file-write-data (literal "/dev/stdout"))
+(allow file-write-data (literal "/dev/stderr"))
+(allow file-read* file-write* file-ioctl
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/tty")
+  (literal "/dev/ptmx"))
+(allow file-read* (literal "/dev/random") (literal "/dev/urandom"))
+(allow file-read-metadata file-test-existence (literal "/dev"))
+(allow file-read-metadata file-test-existence
+  (literal "/dev/stdin")
+  (literal "/dev/stdout")
+  (literal "/dev/stderr"))
+(allow file-read-data file-test-existence (regex #"^/dev/fd/0$"))
+(allow file-write-data file-test-existence (regex #"^/dev/fd/(1|2)$"))
+(allow pseudo-tty)
+(allow file-read* file-write*
+  (require-all
+    (regex #"^/dev/ttys[0-9]+$")
+    (extension "com.apple.sandbox.pty")))
+(allow file-ioctl (regex #"^/dev/ttys[0-9]+$"))
+
+; Local unnamed IPC used by common runtimes. Path-based Unix socket access is not granted.
+(allow system-socket (socket-domain AF_UNIX))
+(allow ipc-posix-sem)
+(allow ipc-posix-shm-read-data
+  ipc-posix-shm-write-create
+  ipc-posix-shm-write-unlink
+  (ipc-posix-name-regex #"^/__KMP_REGISTERED_LIB_[0-9]+$"))
+
+; Read-only preference and identity services used during process startup.
+(allow ipc-posix-shm-read* (ipc-posix-name-prefix "apple.cfprefs."))
+(allow mach-lookup
+  (global-name "com.apple.cfprefsd.daemon")
+  (global-name "com.apple.cfprefsd.agent")
+  (local-name "com.apple.cfprefsd.agent")
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.PowerManagement.control"))
+(allow user-preference-read)
+
+; Runtime feature detection.
+(allow sysctl-read)

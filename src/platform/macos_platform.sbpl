@@ -1,0 +1,54 @@
+; macOS system runtime defaults. Optional developer stacks and user data must
+; be supplied as explicit dynamic authorities.
+
+(allow file-read-data file-read-metadata file-test-existence (literal "/"))
+
+(allow file-read* file-test-existence
+  (literal "/private/var/select/sh"))
+
+; Trusted launcher canonicalization needs metadata on only these ancestor
+; chains; launcher data authority remains limited to the rules below.
+(allow file-read-metadata file-test-existence
+  (path-ancestors "/usr/bin/sandbox-exec")
+  (path-ancestors "/bin/bash"))
+
+(allow file-read* file-test-existence
+  (subpath "/System")
+  (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
+  (subpath "/Library/Preferences")
+  (subpath "/usr/bin")
+  (subpath "/usr/lib")
+  (subpath "/usr/libexec")
+  (subpath "/usr/sbin")
+  (subpath "/usr/share")
+  (subpath "/usr/standalone")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/private/etc")
+  (subpath "/etc")
+  (subpath "/private/var/db/timezone")
+  (subpath "/private/var/db/DarwinDirectory/local/recordStore.data"))
+
+(allow file-map-executable
+  (subpath "/System")
+  (subpath "/Library/Apple")
+  (subpath "/Library/Developer")
+  (subpath "/usr/bin")
+  (subpath "/usr/lib")
+  (subpath "/usr/libexec")
+  (subpath "/usr/sbin")
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/usr/standalone"))
+
+; Resolve standard firmlinks and symlinks without exposing user trees.
+(allow file-read-metadata file-test-existence
+  (literal "/tmp")
+  (literal "/var")
+  (literal "/private")
+  (literal "/private/tmp")
+  (literal "/System/Volumes")
+  (literal "/System/Volumes/Data")
+  (path-ancestors "/private/etc")
+  (path-ancestors "/private/var/db/timezone"))
