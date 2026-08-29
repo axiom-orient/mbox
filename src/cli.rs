@@ -1,8 +1,10 @@
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
-pub const HELP: &str = "\
-mbox 1.1.0
+pub const HELP: &str = concat!(
+    "mbox ",
+    env!("CARGO_PKG_VERSION"),
+    "\n\
 Run one command in the native macOS or Linux sandbox.
 
 USAGE:
@@ -16,6 +18,7 @@ OPTIONS:
     --network           Allow the native network. Default: denied.
     --allow-net DOMAIN  Allow HTTPS CONNECT to one exact ASCII DNS name. Repeatable.
     --deny-write PATH   Subtract write authority at PATH. Repeatable.
+    --no-child-processes  On macOS, run one native Mach-O without child/other-image exec authority.
     --env NAME          Pass one existing environment variable. Repeatable.
     --set-env NAME=VAL  Set one environment variable. Repeatable.
     --inherit-env       Pass all non-reserved, non-launcher environment variables.
@@ -26,7 +29,8 @@ The `--` separator is mandatory. Paths are resolved once to canonical paths.
 On macOS, `--tmp` is optional; when omitted, the target has no TMPDIR or
 temporary write authority. Linux rejects `--tmp` and uses anonymous `/tmp`.
 There are no profiles, configuration files, compatibility aliases, or fallbacks.
-";
+"
+);
 
 #[derive(Debug, Clone)]
 pub struct Request {
@@ -37,6 +41,7 @@ pub struct Request {
     pub network: bool,
     pub allow_net: Vec<OsString>,
     pub deny_writes: Vec<PathBuf>,
+    pub no_child_processes: bool,
     pub env_names: Vec<OsString>,
     pub env_overrides: Vec<(OsString, OsString)>,
     pub inherit_env: bool,
@@ -65,6 +70,7 @@ where
         network: false,
         allow_net: Vec::new(),
         deny_writes: Vec::new(),
+        no_child_processes: false,
         env_names: Vec::new(),
         env_overrides: Vec::new(),
         inherit_env: false,
@@ -109,6 +115,7 @@ where
             Some("--deny-write") => request
                 .deny_writes
                 .push(PathBuf::from(next_value(&mut args, "--deny-write")?)),
+            Some("--no-child-processes") => request.no_child_processes = true,
             Some("--env") => request.env_names.push(next_value(&mut args, "--env")?),
             Some("--set-env") => {
                 let value = next_value(&mut args, "--set-env")?;
@@ -168,12 +175,18 @@ fn split_assignment(value: OsString) -> Result<(OsString, OsString), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Action};
+    use super::{parse, Action, HELP};
     use std::ffi::OsString;
     use std::path::PathBuf;
 
     fn argv(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn help_uses_package_version() {
+        let expected = format!("mbox {}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(HELP.lines().next(), Some(expected.as_str()));
     }
 
     #[test]
@@ -227,6 +240,21 @@ mod tests {
         assert_eq!(request.env_names, argv(&["TERM"]));
         assert_eq!(request.env_overrides[0].0, "MODE");
         assert_eq!(request.env_overrides[0].1, "test");
+        assert!(!request.no_child_processes);
+    }
+
+    #[test]
+    fn parses_strict_no_child_processes_mode() {
+        let Action::Run(request) = parse(argv(&[
+            "mbox",
+            "--no-child-processes",
+            "--",
+            "/usr/bin/true",
+        ]))
+        .unwrap() else {
+            panic!("expected run");
+        };
+        assert!(request.no_child_processes);
     }
 
     #[test]

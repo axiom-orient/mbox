@@ -32,8 +32,50 @@ or others. There is no unsandboxed fallback. The prepared command invokes:
   /bin/bash --noprofile --norc -c 'exec -a "$1" "$2" "${@:3}"'
 ```
 
-The original command spelling is passed as `argv0`; the canonical executable
-path is passed as the executable. `PreparedCommand::exec` closes inherited file
+`--no-child-processes` is a separate strict launch contract. It validates
+`/usr/bin/sandbox-exec` as above, then validates the selected target with
+bounded positioned reads. The preflight checks the current-host CPU type and
+native byte order, thin/fat/fat64 headers and slice table bounds/non-overlap.
+Fat/fat64 headers and architecture tables are accepted only in their
+big-endian on-disk form (`CA FE BA BE`/`CA FE BA BF`); the CIGAM byte
+sequences are host-read swap constants and fail setup. All supported macOS
+host architectures are 64-bit, so Thin32 images fail setup even when their
+header CPU type is the host CPU. The remaining checks cover
+`MH_EXECUTE`, bounded `ncmds`/`sizeofcmds`, 4-byte (32-bit) or 8-byte
+(64-bit) load-command alignment and progression, and a complete `LC_MAIN` or
+host `LC_UNIXTHREAD` entry command. Shebang files, interpreter shims,
+nonregular files, unknown magic, and truncated or malformed data at these
+checked boundaries—including fat files without a host executable slice—fail
+setup with status `125`. `/bin/bash` is not consulted or
+launched. The prepared command invokes:
+
+```text
+/usr/bin/sandbox-exec -p <compiled strict Seatbelt policy> -DEXECUTABLE=<canonical target> --
+  <canonical target> [ARG...]
+```
+
+The canonical target path is `argv[0]`; caller spelling is intentionally not
+preserved. The strict policy ends with `deny process-fork`, `deny
+process-exec`, and an exact-target `allow process-exec`. Thus fork/vfork,
+`posix_spawn`, background child creation, and exec of another image fail. The
+exact target image may self-reexec. Before direct replacement mbox observes or
+establishes `pgid == pid` in the same process. The target is consequently a
+process-group leader and direct `setsid(2)` fails; Seatbelt is not claimed to
+provide an independent setsid rule. This same-process group identity is the
+outer custody proof, and setup fails if it cannot be established.
+
+Strict mode rejects `--allow-net` because the exact-domain proxy requires a
+separate supervisor; `--network` has no proxy and remains compatible. The mode
+does not add inode/path pinning and does not protect against same-account/root
+host mutation or post-plan path replacement.
+
+The preflight proves only these bounded structural invariants; it does not
+duplicate the kernel, dyld, code-signature, or complete runtime-loader checks.
+An image that passes structure can still fail after replacement, in which case
+the later loader/runtime result may be returned as the native target status.
+
+In normal mode, the original command spelling is passed as `argv0`; the
+canonical executable path is passed as the executable. `PreparedCommand::exec` closes inherited file
 descriptors other than standard input/output/error before the native `exec`.
 Exact-domain mode is the explicit supervised path: mbox owns ephemeral
 listeners on both `127.0.0.1` and `::1` at one port and the target's initial
@@ -186,6 +228,15 @@ HelloRetryRequest/second ClientHello.
 
 ## Failure contract
 
+Release verification scripts have a separate startup contract. Their
+executable shebang is the exact Darwin `/usr/bin/env -S -i` form, so Bash never
+sees inherited startup controls. The nested runner allowlists only fixed
+protocol paths, tool digests, and explicitly supplied `MBOX`/`PROBE` values;
+ambient `PATH`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `CDPATH`,
+`GLOBIGNORE`, and `BASH_XTRACEFD` are not propagated. Direct `bash script`
+invocation is unsupported and fails the boundary-marker check; callers must
+execute the script path or use the sanitized runner.
+
 - malformed CLI input exits `2`;
 - plan validation, trusted-launcher checks, invalid `--tmp`, and policy
   preparation failures before native exec exit `125`;
@@ -209,7 +260,7 @@ The backend intentionally leaves these boundaries explicit:
 | Path identity is not an inode pin | Canonicalization and final executable-write subtraction narrow the window, but a trusted caller must not mutate paths during preparation. |
 | No resource scheduler | CPU, memory, process, wall-time, output, and disk limits belong to the caller or an upper execution layer. |
 | Caller-owned temporary storage | `--tmp` is never created, chmodded, or deleted by mbox; the caller must provide and clean an existing 0700 directory. |
-| Trusted launcher custody | `/usr/bin/sandbox-exec`, `/bin/bash`, and every parent directory are checked for canonical root-owned non-writable executables/directories; absence or failure is a setup error, never a fallback. |
+| Trusted launcher custody | `/usr/bin/sandbox-exec` and every parent directory are checked for canonical root-owned non-writable executables/directories; normal mode additionally checks `/bin/bash`, while strict mode checks the native target. Absence or failure is a setup error, never a fallback. |
 | Helper lifecycle identity | The macOS contract uses the Darwin kernel PID/start tuple from `proc_pidinfo(PROC_PIDTBSDINFO)` with second and microsecond fields. Unknown or changed identity refuses signaling; an immediate capture failure uses only the just-created exact PID and fails if bounded TERM/KILL observation does not complete. The probe creates no descendants, so process-group ownership is not claimed. |
 | Exact-mode setsid escape | Public Darwin process groups and audit sessions do not provide an unprivileged immutable descendant container/kill primitive. A target can `setsid(2)` and double-fork out of the owned PGID; AJ demonstrates and explicitly kills the test process. Do not use exact mode for untrusted descendants until a kernel-owned lifecycle primitive exists. |
 

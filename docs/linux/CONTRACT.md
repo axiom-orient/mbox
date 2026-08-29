@@ -49,8 +49,10 @@ while argument-aware seccomp rules block `TIOCSTI` and `TIOCLINUX`.
 The shared CLI accepts `--allow-net DOMAIN` and `--deny-write PATH` so callers
 can use one explicit contract, but Linux native implementation is not claimed
 yet: either option fails setup with status `125` before Bubblewrap or the target
-starts. A future Linux implementation requires its own native bypass and
-subtraction proof; it must not silently ignore either option.
+starts. `--no-child-processes` is likewise macOS-only and fails setup with
+status `125` before Bubblewrap or the target starts. A future Linux
+implementation requires its own native bypass and subtraction proof; it must
+not silently ignore any of these options.
 
 ## Trust requirements
 

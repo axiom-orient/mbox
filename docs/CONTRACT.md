@@ -28,8 +28,8 @@ argv + selected environment + filesystem metadata
 
 `ExecutionPlan` is the only application state. It owns the canonical executable,
 original `argv0`, arguments, cwd, minimized read/write roots, optional macOS
-temporary directory, environment, and network decision. It is immutable after
-construction.
+temporary directory, environment, network decision, and the macOS strict
+`no_child_processes` decision. It is immutable after construction.
 
 There is no persistent state, profile, daemon, retry loop, background task,
 transaction, or fallback backend.
@@ -122,6 +122,35 @@ with setup status `125` until its own native proof exists.
 `/usr/bin/sandbox-exec` loads a deny-by-default Seatbelt profile. `/bin/bash`
 performs one positional `exec -a` so the original command spelling remains
 `argv0` without interpolating target arguments into shell source.
+
+With `--no-child-processes`, mbox bypasses Bash and invokes
+`/usr/bin/sandbox-exec` directly with the canonical executable. Before launch,
+mbox performs bounded positioned reads of the file. It checks the current-host
+CPU type and native byte order, the thin or selected fat/fat64 header, an
+`MH_EXECUTE` file type, bounded load-command count/bytes, slice/table
+non-overlap and bounds, 4-byte (32-bit) or 8-byte (64-bit) command alignment,
+command progression, and a structurally complete `LC_MAIN` or host
+`LC_UNIXTHREAD` entry command. Fat/fat64 headers and architecture tables are
+accepted only in their big-endian on-disk form (`CA FE BA BE`/`CA FE BA BF`);
+the CIGAM byte sequences are host-read swap constants and fail setup. All
+supported macOS host architectures are 64-bit, so Thin32 images fail setup
+even when their header CPU type claims the host. The target must therefore be
+an executable regular Mach-O or fat Mach-O file with a structurally valid
+current-host slice. The final Seatbelt rules
+deny `process-fork` and `process-exec`, then allow `process-exec` only for the
+exact `EXECUTABLE` parameter, so fork/vfork/`posix_spawn`/background creation
+and exec of another image fail. The exact image may self-reexec. Before the
+same-process exec, mbox observes or establishes `pgid == pid`; a direct
+`setsid(2)` therefore fails because the target is a process-group leader. This
+is a process-group invariant, not an independent Seatbelt `setsid` denial.
+Strict mode rejects macOS exact-domain `--allow-net`, because its proxy would
+require a separate supervisor; full `--network` remains supported. Linux
+returns setup `125` for this option, and Windows is unsupported at compile
+time. Structurally rejected images fail setup with status `125` before native
+replacement. This preflight is not a full kernel, dyld, code-signature, or
+runtime loader validation; a structurally accepted image can still fail later,
+and such a post-replacement loader/target result may be returned as the native
+target status.
 
 `--tmp` is caller-owned: mbox neither creates nor deletes it. This preserves
 direct exec semantics without pretending that Rust cleanup can run afterward.

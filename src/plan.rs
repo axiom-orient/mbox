@@ -33,6 +33,7 @@ pub struct ExecutionPlan {
     pub network: bool,
     pub allow_net: Vec<String>,
     pub deny_writes: Vec<AccessRoot>,
+    pub no_child_processes: bool,
 }
 
 impl ExecutionPlan {
@@ -110,6 +111,7 @@ impl ExecutionPlan {
             network: request.network,
             allow_net,
             deny_writes,
+            no_child_processes: request.no_child_processes,
         })
     }
 }
@@ -684,6 +686,7 @@ mod tests {
             network: false,
             allow_net: Vec::new(),
             deny_writes: Vec::new(),
+            no_child_processes: true,
             env_names: Vec::new(),
             env_overrides: Vec::new(),
             inherit_env: false,
@@ -691,6 +694,7 @@ mod tests {
         })
         .unwrap();
 
+        assert!(plan.no_child_processes);
         assert!(plan.reads.iter().any(|root| root.path == command));
         assert!(!plan.reads.iter().any(|root| root.path == parent));
     }
@@ -732,6 +736,7 @@ mod tests {
             network: false,
             allow_net: Vec::new(),
             deny_writes: vec![PathBuf::from(".git")],
+            no_child_processes: false,
             env_names: Vec::new(),
             env_overrides: Vec::new(),
             inherit_env: false,

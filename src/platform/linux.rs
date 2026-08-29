@@ -103,6 +103,12 @@ struct MountSetup {
 }
 
 pub fn prepare(plan: &ExecutionPlan) -> io::Result<PreparedCommand> {
+    if plan.no_child_processes {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "`--no-child-processes` is supported only on macOS; Linux setup aborted",
+        ));
+    }
     if !plan.allow_net.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -690,6 +696,7 @@ mod tests {
             network: false,
             allow_net: Vec::new(),
             deny_writes: Vec::new(),
+            no_child_processes: false,
         };
 
         let setup = prepare_mounts(&plan).unwrap();
@@ -747,6 +754,7 @@ mod tests {
             network: false,
             allow_net: Vec::new(),
             deny_writes: Vec::new(),
+            no_child_processes: false,
         };
         let args = compile_args(&plan, 9, &mount_setup).unwrap();
         assert!(args.iter().any(|arg| arg == "--unshare-net"));

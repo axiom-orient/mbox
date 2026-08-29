@@ -24,6 +24,16 @@ chosen. Invalid CLI input exits `2`; validation or native setup failures exit
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for build, deployment, and runbook
 practice.
 
+On macOS, `--no-child-processes` is the strict single-image mode used when the
+caller needs a native Mach-O target with no target-created fork/vfork/
+`posix_spawn`/background child and no exec of another image. The target is
+launched directly by Seatbelt with canonical-path `argv[0]`; bounded Mach-O
+preflight rejects malformed images, scripts, interpreter shims, and fat files
+without a current-host executable slice. The flag establishes the mbox process as its
+own process-group leader before replacement, so a direct `setsid(2)` attempt
+fails. It cannot be combined with macOS exact-domain `--allow-net`; Linux
+returns setup `125`, and Windows is unsupported at compile time.
+
 ## Security boundary in one view
 
 The target receives direct stdin/stdout/stderr and native exit status. mbox
@@ -44,6 +54,7 @@ output, and disk limits belong to the caller. The complete invariant set is in
 | Exact HTTPS domain | `--allow-net DOMAIN` | setup `125` |
 | Subtract a writable path, including `.git` | `--deny-write PATH` | setup `125` |
 | Caller-supplied temp directory | existing 0700 `--tmp PATH` | setup `125`; anonymous `/tmp` |
+| Strict single native image | `--no-child-processes` | setup `125` |
 
 Linux release support is `x86_64` and `aarch64`. `/usr/local`, home-managed
 toolchains, and similar runtime data are not ambient; add only required paths

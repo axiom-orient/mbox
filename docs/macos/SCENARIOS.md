@@ -37,6 +37,13 @@ the native Seatbelt launcher. The IDs below cover only macOS-owned behavior.
 | V | Create an unnamed Unix socket pair | succeeds inside the Seatbelt sandbox |
 | W | Supply invalid authority | exit 125; target does not run |
 | X | Run the same request twice | no hidden state changes the result |
+| AK | Strict direct native target and thread-only work | canonical target `argv[0]` is observed; a thread-only target succeeds without Bash |
+| AL | Strict child/other-image boundary | fork/vfork/`posix_spawn`/background/setsid attempts report denial with no marker; `/bin/bash` re-exec is denied |
+| AM | Strict visible process custody | same PID/start tuple is terminated and has no immediate or delayed survivor |
+| AN | Strict setup rejection | script/interpreter shim and exact-domain proxy fail setup `125` |
+| AO | Strict structural-image rejection | magic-only image fails setup `125` before target execution |
+| AP | Strict fat-image endian/width rejection | complete CIGAM32/CIGAM64 images and a host-CPU Thin32 image fail setup `125` before Seatbelt |
+| AQ | Strict same-image self-reexec | the native helper `execve`s its exact canonical image once; before/after Darwin PID/start tuples and image paths match |
 | Y | Run requests concurrently | direct executions do not share hidden mbox temp state |
 | Z | Trigger a denied write | no partial host file remains |
 | AA | Read a sibling beside the executable | denied unless that exact sibling is explicitly read |
@@ -55,6 +62,7 @@ choose explicit cwd/read/write/network authority and optional caller-owned tmp
   → canonicalize and build one immutable plan
   → compile the deny-default Seatbelt policy with metadata-only root ancestors
   → subtract writes to the exact executable, caller-protected paths, and terminal-input injection after broad grants
+  → in strict mode, validate Mach-O, append final fork/exec subtraction, observe or establish pgid == pid, and direct-exec the canonical target
   → for exact domains, bind parent-owned ephemeral CONNECT listeners on both loopback families and grant Seatbelt only that port
   → close inherited descriptors and supervise only the exact-domain target group
   → observe direct stdio, status, and signal behavior (interactive exact-mode PTY restoration remains `[UNVERIFIED]`)
@@ -64,6 +72,24 @@ choose explicit cwd/read/write/network authority and optional caller-owned tmp
 `tests/macos/contract.sh` is the executable oracle and
 `tests/macos/helpers/sandbox_probe.rs` is its small macOS-compatible probe.
 A successful macOS run does not close the Linux gate.
+
+Scenarios AK–AP cover the strict `--no-child-processes` path. The native
+helper attempts each process-creation API and a `/bin/bash` re-exec; the
+contract checks denial evidence, absence of a writable marker immediately and
+after a delay, and the visible PID/start tuple for a thread-only hold. Strict
+`setsid(2)` failure comes from the established process-group-leader invariant;
+the scenario does not claim an independent Seatbelt setsid permission. AO
+passes only a four-byte Mach-O magic file and proves structural preflight
+returns setup `125` without executing it. AP passes complete little-endian
+CIGAM32/CIGAM64 tables around the native helper and separately exercises the
+host-CPU Thin32 contradiction; all fail before Seatbelt.
+
+Scenario AQ is the positive strict-exec oracle. The helper prints its Darwin
+PID/start tuple, directly `execve`s the exact canonical helper image with an
+explicit one-time argv phase marker, and prints the tuple again after
+replacement. The contract requires equal tuples and two matching canonical
+image lines. No fork, child, or Bash launcher is involved; AL continues to
+cover the other-image and process-creation denials.
 
 Scenario AE is the repository's lifecycle regression. It records the helper's
 PID and Darwin kernel start tuple from `proc_pidinfo(PROC_PIDTBSDINFO)`

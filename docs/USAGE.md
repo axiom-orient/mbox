@@ -19,6 +19,7 @@ retry, daemon, or unsandboxed fallback.
 | Reach one HTTPS service | macOS `--allow-net DOMAIN` | exact DNS name, port 443, initial TLS SNI |
 | Reach the native network | `--network` | full native network; no exact-domain filter |
 | Give macOS a private temp root | existing caller-owned `--tmp PATH` | exact mode `0700`; caller cleanup |
+| Run one native image only | macOS `--no-child-processes` | Linux setup `125`; scripts/shims rejected |
 
 The selected cwd and executable are always in the plan. Relative paths resolve
 from the selected cwd. `--read` and `--write` add roots, and a write root
@@ -121,6 +122,42 @@ the proxy environment cannot create a direct network path.
 Linux rejects `--allow-net` with setup `125`; there is no Linux exact-domain
 fallback in this release.
 
+### Strict single-image mode on macOS
+
+For a target that must not create child processes or launch another image:
+
+```sh
+"$MBOX" --cwd "$WORK" --no-child-processes --read "$TOOL" -- \
+  "$TOOL" --strict-arguments
+```
+
+The selected command must be an executable regular Mach-O or fat Mach-O file
+with a structurally valid current-host slice. mbox performs bounded
+preflight checks for the native header, `MH_EXECUTE`, bounded fat/fat64 slice
+tables, load-command bounds/alignment/progression, and a complete `LC_MAIN` or
+host `LC_UNIXTHREAD` entry command. Fat/fat64 headers and architecture tables
+are accepted only as big-endian on-disk `CA FE BA BE`/`CA FE BA BF` data; CIGAM
+swap constants and all Thin32 images fail setup, including a Thin32 header that
+claims the current host CPU. Shebang scripts, interpreter shims, and
+structurally rejected images fail setup with status `125` before target
+replacement. This is not a full kernel/dyld/code-signature or runtime-loader
+validation; a later loader/runtime failure may still return the native target
+status. mbox invokes `/usr/bin/sandbox-exec` directly with the canonical
+executable, so
+`argv[0]` is the canonical path rather than the caller's original spelling.
+Seatbelt denies `fork`, `vfork`, `posix_spawn`, and other process creation, and
+denies exec of another image. Re-exec of the exact canonical target itself is
+still allowed by the exact-target rule. Before replacement, mbox observes or
+establishes `pgid == pid`; therefore a direct `setsid(2)` call from the target
+fails because the target is a process-group leader. This is a process-group
+invariant, not a claim that Seatbelt independently denies `setsid(2)`.
+
+The strict mode has no target supervisor or output capture. A macOS
+`--allow-net` proxy would require a separate supervisor, so that combination
+is rejected. `--network` remains compatible because it has no proxy process.
+Path canonicalization is still path-based; this mode does not protect against
+same-account/root host mutation or post-plan path replacement.
+
 ## 5. Environment authority
 
 The default environment is intentionally small. Add application inputs
@@ -167,6 +204,7 @@ Linux, `--tmp` exits `125`; the backend supplies anonymous sandbox-private
 | `--allow-net` | exact HTTPS CONNECT | setup `125` |
 | `--deny-write` | supported | setup `125` |
 | `--tmp` | existing 0700 caller directory | setup `125`; anonymous `/tmp` |
+| `--no-child-processes` | native Mach-O, no child/other-image exec | setup `125` |
 | Native proof | `./scripts/verify-macos.sh` on Darwin | `./scripts/verify-linux.sh` on Linux |
 
 Native proof does not transfer between hosts. A macOS build or runtime result
@@ -197,6 +235,10 @@ result.
 - macOS exact-domain cleanup owns the initial process group only. A target that
   calls `setsid(2)` and double-forks can escape it; see
   [`macos/SCENARIOS.md`](macos/SCENARIOS.md).
+- macOS strict mode is direct-exec and establishes `pgid == pid` before target
+  replacement. It denies child creation and other-image exec but permits the
+  exact target image, including self-reexec; it rejects scripts/interpreter
+  shims and cannot use `--allow-net`.
 - Linux pins mount source descriptors during preparation, but the caller and
   host remain trusted before that boundary.
 - `/usr/local`, home-managed toolchains, Xcode, and other non-system runtime

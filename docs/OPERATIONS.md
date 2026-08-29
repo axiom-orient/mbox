@@ -41,7 +41,7 @@ Choose the gate from the actual host, not the desired deployment target:
 ./scripts/verify.sh --runtime-only
 ```
 
-For release evidence, run the full gate on the native host:
+For ordinary native evidence, run the full gate on the native host:
 
 ```sh
 # Darwin only
@@ -50,6 +50,35 @@ For release evidence, run the full gate on the native host:
 # Linux only
 ./scripts/verify-linux.sh
 ```
+
+For the AXD-pinned Darwin release, use the fixed local provenance protocol
+instead of an arbitrary checkout path:
+
+```sh
+./scripts/verify-macos.sh --release-provenance
+```
+
+It uses the marker-owned protocol directory
+`/Users/ax/repoGithub/mbox/target/.mbox-release-v2` for two sequential clean
+builds, then installs the verified bytes at
+`/Users/ax/repoGithub/mbox/target/release/mbox`. Its record is
+[`macos/RELEASE-v0.2.0.sha256`](macos/RELEASE-v0.2.0.sha256); this is
+path-specific Darwin evidence, not a path-independent reproducibility claim.
+The final replacement is performed by the checked-in
+`scripts/macos/atomic_install.rs` helper using a held release-directory fd and
+atomic `renameat`; it rejects symlinks, unsafe modes/devices, and hardlinked
+destinations. Its source digest is recorded separately as
+`release-helper-sha256`, outside the binary source fingerprint, and its fixed
+protocol-compiled binary digest is recorded as
+`release-helper-binary-sha256`. The record also pins the exact Cargo/rustc,
+rustfmt/clippy-driver, linker/XCRun, SDK, and hash-tool paths plus SHA-256
+values. The release gate clears dangerous build overrides, uses a fixed system
+`PATH`, passes those exact paths into nested gates, and rechecks each digest
+immediately before use; a hostile caller `PATH` cannot select release tools.
+The release script never deletes the whole `target` tree: it refuses a missing
+or invalid marker and cleans only the exact reserved directory after owner,
+no-symlink, same-device, and non-mounted-tree checks. Unrelated `target`
+siblings are outside its destructive scope.
 
 The macOS gate requires a functional trusted `/usr/bin/sandbox-exec` and
 `/bin/bash`. The Linux gate requires a trusted root-owned non-setuid Bubblewrap

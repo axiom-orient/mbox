@@ -24,6 +24,8 @@ pub struct PreparedCommand {
     _resources: Vec<File>,
     #[cfg(target_os = "macos")]
     supervisor: Option<macos_proxy::ProxyRuntime>,
+    #[cfg(target_os = "macos")]
+    process_group_leader: bool,
 }
 
 impl PreparedCommand {
@@ -34,12 +36,20 @@ impl PreparedCommand {
             _resources: Vec::new(),
             #[cfg(target_os = "macos")]
             supervisor: None,
+            #[cfg(target_os = "macos")]
+            process_group_leader: false,
         }
     }
 
     #[cfg(target_os = "macos")]
     pub fn with_supervisor(mut self, supervisor: macos_proxy::ProxyRuntime) -> Self {
         self.supervisor = Some(supervisor);
+        self
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn with_process_group_leader(mut self) -> Self {
+        self.process_group_leader = true;
         self
     }
 
@@ -54,6 +64,11 @@ impl PreparedCommand {
         #[cfg(target_os = "macos")]
         if let Some(supervisor) = self.supervisor.take() {
             return macos::run_supervised(self.command, supervisor);
+        }
+
+        #[cfg(target_os = "macos")]
+        if self.process_group_leader {
+            macos::establish_process_group_leader()?;
         }
 
         fd::close_inherited(&self.preserve_fds)?;

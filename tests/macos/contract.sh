@@ -1,7 +1,28 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/Users/ax LC_ALL=C MBOX_RELEASE_STARTUP_BOUNDARY=mbox-macos-sanitized-v1 /bin/bash
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+[[ ${MBOX_RELEASE_STARTUP_BOUNDARY-} == mbox-macos-sanitized-v1 ]] || {
+  printf 'macOS contract: direct bash invocation is unsupported; use the executable path\n' >&2
+  exit 69
+}
+TMPDIR=$(/usr/bin/getconf DARWIN_USER_TEMP_DIR) || exit 69
+export TMPDIR
+[[ -d "$TMPDIR" && ! -L "$TMPDIR" ]] || exit 69
+
+SCRIPT_DIR=$(/usr/bin/dirname "${BASH_SOURCE[0]}")
+# shellcheck source=scripts/macos/release-tools.sh
+source "$SCRIPT_DIR/../../scripts/macos/release-tools.sh"
+export PATH="$MBOX_RELEASE_SYSTEM_PATH"
+export LC_ALL=C
+if [[ "${MBOX_RELEASE_PROVENANCE:-0}" != 1 ]]; then
+  export MBOX_RELEASE_PROVENANCE=0
+  export HOME=/Users/ax
+  export RUSTUP_HOME=/Users/ax/.rustup
+  mbox_release_discover_toolchain
+  export MBOX_RELEASE_PROVENANCE=1
+fi
+
+ROOT=$(cd "$SCRIPT_DIR/../.." && "$MBOX_RELEASE_PWD_PATH" -P)
 cd "$ROOT"
 
 fail() {
@@ -29,10 +50,16 @@ expect_status() {
   [[ $status -eq $expected ]] || fail "expected status $expected, got $status: $*"
 }
 
-[[ $(uname -s) == Darwin ]] || fail "macOS contract must run on Darwin"
+[[ $($MBOX_RELEASE_UNAME_PATH -s) == Darwin ]] || fail "macOS contract must run on Darwin"
 
 MBOX=${MBOX:-"$ROOT/target/debug/mbox"}
 PROBE=${PROBE:-"$ROOT/target/mbox-macos-sandbox-probe"}
+BUILD_MBOX=${BUILD_MBOX:-1}
+
+[[ $BUILD_MBOX == 0 || $BUILD_MBOX == 1 ]] || fail "BUILD_MBOX must be 0 or 1"
+[[ -x "$MBOX" ]] || {
+  [[ $BUILD_MBOX == 1 ]] || fail "configured MBOX is not executable: $MBOX"
+}
 
 LIFECYCLE_POLL_LIMIT=100
 LIFECYCLE_POLL_SECONDS=0.02
@@ -47,16 +74,21 @@ for candidate in /usr/bin/true /bin/true; do
 done
 [[ -n $TRUE ]] || fail "no executable true command found"
 
-cargo build --quiet --locked --manifest-path "$ROOT/Cargo.toml"
-rustc --edition=2021 "$ROOT/tests/macos/helpers/sandbox_probe.rs" -o "$PROBE"
+if [[ $BUILD_MBOX == 1 ]]; then
+  mbox_release_run_cargo build --quiet --locked --manifest-path "$ROOT/Cargo.toml"
+fi
+mbox_release_recheck_tool rustc "$MBOX_RELEASE_RUSTC_PATH" "$MBOX_RELEASE_RUSTC_SHA256"
+"$MBOX_RELEASE_RUSTC_PATH" --edition=2021 "$ROOT/tests/macos/helpers/sandbox_probe.rs" -o "$PROBE"
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/mbox-macos-contract.XXXXXX")
+TMP=$($MBOX_RELEASE_MKTEMP_PATH -d "${TMPDIR:-/tmp}/mbox-macos-contract.XXXXXX")
 SERVER_PID=
 SERVER_IDENTITY=
 SERVER_WAIT_STATUS=
 ESCAPED_PID=
 ESCAPED_IDENTITY=
 ESCAPED_IDENTITY_OBSERVED=
+STRICT_HOLD_PID=
+STRICT_HOLD_IDENTITY=
 
 # The probe's tcp-server branch does not fork or daemonize. Keep cleanup scoped
 # to the captured PID and Darwin kernel start identity; do not infer ownership
@@ -346,6 +378,49 @@ cleanup_escaped() {
   ESCAPED_IDENTITY=
 }
 
+cleanup_strict_hold() {
+  local identity_status
+  local observed
+  local iteration=0
+
+  [[ -n "$STRICT_HOLD_PID" ]] || return 0
+  if observed=$(process_identity "$STRICT_HOLD_PID" 2>/dev/null); then
+    [[ "$observed" == "$STRICT_HOLD_IDENTITY" ]] || {
+      printf 'contract: strict hold identity changed: expected `%s`, observed `%s`\n' \
+        "$STRICT_HOLD_IDENTITY" "$observed" >&2
+      return 1
+    }
+    kill -TERM "$STRICT_HOLD_PID" 2>/dev/null || true
+  else
+    identity_status=$?
+    [[ $identity_status -eq 1 ]] || {
+      printf 'contract: strict hold identity unavailable; refusing signal\n' >&2
+      return 1
+    }
+  fi
+
+  while kill -0 "$STRICT_HOLD_PID" 2>/dev/null && [[ $iteration -lt $LIFECYCLE_POLL_LIMIT ]]; do
+    sleep "$LIFECYCLE_POLL_SECONDS"
+    iteration=$((iteration + 1))
+  done
+  if kill -0 "$STRICT_HOLD_PID" 2>/dev/null; then
+    observed=$(process_identity "$STRICT_HOLD_PID" 2>/dev/null) || return 1
+    [[ "$observed" == "$STRICT_HOLD_IDENTITY" ]] || return 1
+    kill -KILL "$STRICT_HOLD_PID" 2>/dev/null || true
+    while kill -0 "$STRICT_HOLD_PID" 2>/dev/null && [[ $iteration -lt $((LIFECYCLE_POLL_LIMIT * 2)) ]]; do
+      sleep "$LIFECYCLE_POLL_SECONDS"
+      iteration=$((iteration + 1))
+    done
+  fi
+  if kill -0 "$STRICT_HOLD_PID" 2>/dev/null; then
+    printf 'contract: strict hold survived bounded cleanup: %s\n' "$STRICT_HOLD_PID" >&2
+    return 1
+  fi
+  wait "$STRICT_HOLD_PID" 2>/dev/null || true
+  STRICT_HOLD_PID=
+  STRICT_HOLD_IDENTITY=
+}
+
 start_server() {
   local port_file=$1
   local output_prefix=$2
@@ -486,6 +561,7 @@ cleanup() {
   local cleanup_status=0
   cleanup_server "EXIT" || cleanup_status=1
   cleanup_escaped "EXIT" || cleanup_status=1
+  cleanup_strict_hold || cleanup_status=1
   rm -rf "$TMP" || cleanup_status=1
   if [[ $cleanup_status -ne 0 ]]; then
     printf 'contract: bounded cleanup failed\n' >&2
@@ -898,6 +974,174 @@ pass W
 "$MBOX" --cwd "$WORK" -- "$TRUE"
 pass X
 
+# AK strict single-image mode: direct canonical argv0 and thread-only work.
+STRICT_ARGV_OUTPUT="$TMP/strict-argv"
+"$MBOX" --cwd "$WORK" --no-child-processes --read "$PROBE" -- \
+  "$PROBE" argv "strict value" >"$STRICT_ARGV_OUTPUT"
+grep -qx "argv0:$PROBE" "$STRICT_ARGV_OUTPUT" || fail AK
+grep -qx '0:strict value' "$STRICT_ARGV_OUTPUT" || fail AK
+"$MBOX" --cwd "$WORK" --no-child-processes --read "$PROBE" -- \
+  "$PROBE" thread-only | grep -qx THREAD-ONLY
+pass AK
+
+# AL strict Seatbelt process rules: no fork/vfork/posix_spawn/background
+# creation, no direct setsid escape, and no re-exec of another image. The
+# marker is written only if the forbidden operation unexpectedly succeeds.
+for strict_operation in fork-marker vfork-marker posix-spawn-marker setsid-marker background-marker; do
+  STRICT_MARKER="$TMP/strict-$strict_operation.marker"
+  STRICT_OUTPUT="$TMP/strict-$strict_operation.output"
+  "$MBOX" --cwd "$WORK" --write "$TMP" --read "$PROBE" --no-child-processes -- \
+    "$PROBE" "$strict_operation" "$STRICT_MARKER" >"$STRICT_OUTPUT" 2>&1 || \
+    fail "AL $strict_operation unexpectedly failed before reporting denial"
+  [[ ! -e "$STRICT_MARKER" ]] || fail "AL $strict_operation marker"
+  grep -qE 'DENIED|Operation not permitted' "$STRICT_OUTPUT" || \
+    fail "AL $strict_operation denial evidence"
+  sleep "$LIFECYCLE_POST_WATCH_SECONDS"
+  [[ ! -e "$STRICT_MARKER" ]] || fail "AL $strict_operation delayed marker"
+done
+STRICT_EXEC_MARKER="$TMP/strict-exec-bash.marker"
+expect_failure "$MBOX" --cwd "$WORK" --write "$TMP" --read "$PROBE" --no-child-processes -- \
+  "$PROBE" exec-bash "$STRICT_EXEC_MARKER"
+[[ ! -e "$STRICT_EXEC_MARKER" ]] || fail AL-exec
+pass AL
+
+# AM strict launch owns the visible PID: capture its Darwin PID/start tuple,
+# terminate it by identity, then prove immediate and delayed absence.
+STRICT_HOLD_OUTPUT="$TMP/strict-hold-output"
+"$MBOX" --cwd "$WORK" --read "$PROBE" --no-child-processes -- \
+  "$PROBE" thread-hold 30 >"$STRICT_HOLD_OUTPUT" 2>&1 &
+STRICT_HOLD_PID=$!
+for _ in $(seq 1 200); do
+  [[ -s "$STRICT_HOLD_OUTPUT" ]] && break
+  sleep 0.02
+done
+grep -qx THREAD-HOLD-READY "$STRICT_HOLD_OUTPUT" || fail AM-ready
+STRICT_HOLD_IDENTITY=$(process_identity "$STRICT_HOLD_PID") || fail AM-identity
+kill -TERM "$STRICT_HOLD_PID"
+set +e
+wait "$STRICT_HOLD_PID"
+STRICT_HOLD_STATUS=$?
+set -e
+[[ $STRICT_HOLD_STATUS -eq 143 ]] || fail "AM status=$STRICT_HOLD_STATUS"
+if kill -0 "$STRICT_HOLD_PID" 2>/dev/null; then
+  fail AM-immediate-survivor
+fi
+printf 'contract lifecycle AM: no survivor immediate pid=%s identity=%s\n' \
+  "$STRICT_HOLD_PID" "$STRICT_HOLD_IDENTITY"
+sleep "$LIFECYCLE_POST_WATCH_SECONDS"
+if kill -0 "$STRICT_HOLD_PID" 2>/dev/null; then
+  fail AM-delayed-survivor
+fi
+STRICT_HOLD_PID=
+STRICT_HOLD_IDENTITY=
+pass AM
+
+# AN scripts/interpreter shims are not native Mach-O strict targets, and the
+# exact-domain proxy is incompatible with same-process strict custody.
+STRICT_SCRIPT="$TMP/strict-script"
+printf '#!/bin/sh\nprintf bad >"%s"\n' "$TMP/strict-script-marker" >"$STRICT_SCRIPT"
+chmod 755 "$STRICT_SCRIPT"
+expect_status 125 "$MBOX" --cwd "$WORK" --no-child-processes -- "$STRICT_SCRIPT"
+[[ ! -e "$TMP/strict-script-marker" ]] || fail AN-script
+expect_status 125 "$MBOX" --cwd "$WORK" --no-child-processes --allow-net example.com -- \
+  "$PROBE" thread-only
+pass AN
+
+# AO a magic-only file is not a native image. Structural preflight must reject
+# it before Seatbelt or the target can create the marker.
+FAKE_MACHO="$TMP/fake-macho"
+FAKE_MACHO_MARKER="$TMP/fake-macho-marker"
+printf '\xcf\xfa\xed\xfe' >"$FAKE_MACHO"
+chmod 755 "$FAKE_MACHO"
+expect_status 125 "$MBOX" --cwd "$WORK" --no-child-processes -- \
+  "$FAKE_MACHO" "$FAKE_MACHO_MARKER"
+[[ ! -e "$FAKE_MACHO_MARKER" ]] || fail AO-marker
+pass AO
+
+# AP fat headers are always big-endian on disk. CIGAM byte sequences are
+# host-read swap constants, not alternate on-disk encodings. Build complete
+# little-endian CIGAM32/CIGAM64 images around the native probe so a pre-fix
+# parser would reach sandbox-exec and expose the kernel's status 71 instead of
+# failing closed during structural preflight.
+write_le32() {
+  local value=$1
+  printf '%b' "$(printf '\\%03o\\%03o\\%03o\\%03o' \
+    $((value & 255)) $(((value >> 8) & 255)) $(((value >> 16) & 255)) \
+    $(((value >> 24) & 255)))"
+}
+
+write_le64() {
+  local value=$1
+  write_le32 $((value & 0xffffffff))
+  write_le32 $(((value >> 32) & 0xffffffff))
+}
+
+case "$(uname -m)" in
+  arm64) HOST_CPU=0x0100000c ;;
+  x86_64) HOST_CPU=0x01000007 ;;
+  *) fail AP-unsupported-host-cpu ;;
+esac
+PROBE_SIZE=$(stat -f %z "$PROBE")
+[[ $PROBE_SIZE -gt 0 && $PROBE_SIZE -lt 4294967296 ]] || fail AP-probe-size
+CIGAM_OFFSET=4096
+
+CIGAM32="$TMP/cigam32"
+printf '\xbe\xba\xfe\xca' >"$CIGAM32"
+write_le32 1 >>"$CIGAM32"
+write_le32 "$HOST_CPU" >>"$CIGAM32"
+write_le32 0 >>"$CIGAM32"
+write_le32 "$CIGAM_OFFSET" >>"$CIGAM32"
+write_le32 "$PROBE_SIZE" >>"$CIGAM32"
+write_le32 12 >>"$CIGAM32"
+dd if=/dev/zero bs=1 count=$((CIGAM_OFFSET - 28)) >>"$CIGAM32" 2>/dev/null
+cat "$PROBE" >>"$CIGAM32"
+
+CIGAM64="$TMP/cigam64"
+printf '\xbf\xba\xfe\xca' >"$CIGAM64"
+write_le32 1 >>"$CIGAM64"
+write_le32 "$HOST_CPU" >>"$CIGAM64"
+write_le32 0 >>"$CIGAM64"
+write_le64 "$CIGAM_OFFSET" >>"$CIGAM64"
+write_le64 "$PROBE_SIZE" >>"$CIGAM64"
+write_le32 12 >>"$CIGAM64"
+write_le32 0 >>"$CIGAM64"
+dd if=/dev/zero bs=1 count=$((CIGAM_OFFSET - 40)) >>"$CIGAM64" 2>/dev/null
+cat "$PROBE" >>"$CIGAM64"
+chmod 755 "$CIGAM32" "$CIGAM64"
+
+[[ $(od -An -tx1 -N4 "$CIGAM32" | tr -d '[:space:]') == bebafeca ]] || fail AP-cigam32-magic
+[[ $(od -An -tx1 -N4 "$CIGAM64" | tr -d '[:space:]') == bfbafeca ]] || fail AP-cigam64-magic
+[[ -x "$CIGAM32" && -x "$CIGAM64" ]] || fail AP-not-executable
+expect_status 125 "$MBOX" --cwd "$WORK" --no-child-processes -- "$CIGAM32"
+expect_status 125 "$MBOX" --cwd "$WORK" --no-child-processes -- "$CIGAM64"
+
+THIN32="$TMP/thin32-host-cpu"
+cp "$PROBE" "$THIN32"
+printf '\xce\xfa\xed\xfe' | dd of="$THIN32" bs=1 count=4 conv=notrunc 2>/dev/null
+chmod 755 "$THIN32"
+[[ $(od -An -tx1 -N4 "$THIN32" | tr -d '[:space:]') == cefaedfe ]] || fail AP-thin32-magic
+[[ -x "$THIN32" ]] || fail AP-thin32-not-executable
+expect_status 125 "$MBOX" --cwd "$WORK" --no-child-processes -- "$THIN32"
+pass AP
+
+# AQ strict self-reexec allows the exact canonical native image once. The
+# helper carries an explicit argv phase marker, prints the Darwin PID/start
+# tuple before replacement and after it, and refuses any other image. A
+# successful equal tuple is the positive proof that Seatbelt permitted only
+# the same native image without creating a child or entering Bash.
+SELF_REEXEC_OUTPUT="$TMP/strict-self-reexec-output"
+"$MBOX" --cwd "$WORK" --no-child-processes --read "$PROBE" -- \
+  "$PROBE" self-reexec "$PROBE" >"$SELF_REEXEC_OUTPUT" 2>&1 || fail AQ
+SELF_REEXEC_BEFORE=$(sed -n 's/^SELF-REEXEC-BEFORE //p' "$SELF_REEXEC_OUTPUT")
+SELF_REEXEC_AFTER=$(sed -n 's/^SELF-REEXEC-AFTER //p' "$SELF_REEXEC_OUTPUT")
+[[ "$SELF_REEXEC_BEFORE" =~ ^[0-9]+\|[0-9]+\|[0-9]+$ ]] || fail AQ-before
+[[ "$SELF_REEXEC_AFTER" =~ ^[0-9]+\|[0-9]+\|[0-9]+$ ]] || fail AQ-after
+[[ "$SELF_REEXEC_BEFORE" == "$SELF_REEXEC_AFTER" ]] || \
+  fail "AQ PID/start identity changed: before=$SELF_REEXEC_BEFORE after=$SELF_REEXEC_AFTER"
+[[ $(grep -c '^SELF-REEXEC-IMAGE ' "$SELF_REEXEC_OUTPUT") -eq 2 ]] || fail AQ-image-count
+grep -qx "SELF-REEXEC-IMAGE $PROBE" "$SELF_REEXEC_OUTPUT" || fail AQ-image
+pass AQ
+
 # Y
 "$MBOX" --cwd "$WORK" -- /bin/sh -c 'sleep 0.1' &
 left=$!
@@ -1019,4 +1263,4 @@ pass AH
 run_exit_cleanup_regression || fail AE
 pass AE
 
-printf 'contract A-AJ + AE: PASS (Darwin)\n'
+printf 'contract A-AQ + AE: PASS (Darwin)\n'

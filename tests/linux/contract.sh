@@ -365,4 +365,12 @@ expect_status 125 "$MBOX" --cwd "$WORK" --deny-write "$WRITE_DIR" -- /bin/sh -c 
 [[ ! -e "$DENY_WRITE_MARKER" ]] || fail "AB deny-write target ran on Linux"
 pass AB
 
-printf 'linux contract A-AB: PASS\n'
+# AC: strict single-image custody is intentionally macOS-only and must not be
+# silently ignored by the Bubblewrap backend.
+NO_CHILD_MARKER="$TMP/no-child-target-ran"
+expect_status 125 "$MBOX" --cwd "$WORK" --no-child-processes -- /bin/sh -c \
+  'touch "$1"' sh "$NO_CHILD_MARKER"
+[[ ! -e "$NO_CHILD_MARKER" ]] || fail "AC no-child target ran on Linux"
+pass AC
+
+printf 'linux contract A-AC: PASS\n'

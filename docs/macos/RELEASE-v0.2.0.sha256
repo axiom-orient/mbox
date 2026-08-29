@@ -1,0 +1,43 @@
+# Source-controlled macOS release provenance for mbox 0.2.0.
+#
+# This is a fixed local Darwin arm64 release receipt.  It is valid only for
+# the exact canonical source root and output path below.  It deliberately does
+# not claim byte reproducibility for an arbitrary fresh checkout path: Mach-O
+# LC_UUID and code-signature/linker output can vary with output path and host.
+# source-fingerprint is SHA-256(sorted(relative-path<TAB>SHA-256(content))) for
+# Cargo manifests/lock, admitted toolchain/config/build inputs, and every src
+# file; unexpected binary-affecting inputs fail closed.
+# The binary is not an input to this record, so the record is non-circular.
+protocol=mbox-macos-fixed-release-v2
+version=mbox 0.2.0
+host=Darwin arm64
+arch=arm64
+rustc=rustc 1.97.1 (8bab26f4f 2026-07-14)
+cargo=cargo 1.97.1 (c980f4866 2026-06-30)
+rustc-path=/Users/ax/.rustup/toolchains/1.97.1-aarch64-apple-darwin/bin/rustc
+rustc-sha256=210df6794001b73ec3d453878707fa1e0bdcb63c427024a6e6574bbe5615a4da
+cargo-path=/Users/ax/.rustup/toolchains/1.97.1-aarch64-apple-darwin/bin/cargo
+cargo-sha256=7672ead309d505577c018fff2cafb3433601f073e38cbe87359ac1f7b944bbf5
+rustfmt-path=/Users/ax/.rustup/toolchains/1.97.1-aarch64-apple-darwin/bin/rustfmt
+rustfmt-sha256=ab19d01d0a7a3a901c62b6b013a98452d38084b5d7f446ccb20c5e83c10db99f
+clippy-driver-path=/Users/ax/.rustup/toolchains/1.97.1-aarch64-apple-darwin/bin/clippy-driver
+clippy-driver-sha256=ca34521c9c61e5570ad5f07b303b00fbb60756fedcb62b9f1529f85971256ecf
+linker-path=/usr/bin/clang
+linker-sha256=179301dcb41ea78accc3fa0048a7e6f6710d891945a751a34addd622020c1818
+sdk-path=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+xcrun-path=/usr/bin/xcrun
+xcrun-sha256=a439970aea2b4e435eac6518ff62c97fd1c57d8c731974027ad211b515c7a7b8
+hash-path=/usr/bin/shasum
+hash-sha256=0812595f981a26f813d98dc380af14d4af427626c9339eda29eb849ae13de1e3
+hash-verify-path=/sbin/sha256sum
+hash-verify-sha256=881f3812ac7be70d99bf635e5322b63f565af66f502be3b464036fef8f927300
+source-fingerprint=574d9256f34200e680010a7b6ef836b185ffa83146d9ef0b71753dab56151c03
+release-helper-sha256=3a8d870b9dd327d026e104b99e4bba838d80f18e65766f6400deaea508f8e393
+release-helper-binary-sha256=13884ca84dfc77ddd009c221e384f9e488d97f07e61c20d5424bf12577f65839
+build-root=/Users/ax/repoGithub/mbox/target/.mbox-release-v2
+build-path=/Users/ax/repoGithub/mbox/target/.mbox-release-v2/release/mbox
+install-path=/Users/ax/repoGithub/mbox/target/release/mbox
+build-command=CARGO_TARGET_DIR=/Users/ax/repoGithub/mbox/target/.mbox-release-v2 CARGO_INCREMENTAL=0 RUSTFLAGS= CARGO_ENCODED_RUSTFLAGS= CARGO_BUILD_RUSTFLAGS= RUSTC_WRAPPER= RUSTC_WORKSPACE_WRAPPER= CARGO_BUILD_RUSTC_WRAPPER= RUSTC=/Users/ax/.rustup/toolchains/1.97.1-aarch64-apple-darwin/bin/rustc RUSTC_LINKER=/usr/bin/clang SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk LC_ALL=C /Users/ax/.rustup/toolchains/1.97.1-aarch64-apple-darwin/bin/cargo build --release --locked --manifest-path /Users/ax/repoGithub/mbox/Cargo.toml
+repeatability=two-sequential-clean-builds-at-canonical-root
+verification=./scripts/verify-macos.sh --release-provenance
+sha256=e08d1664a39b5c3f9eff72032f52a03333aafa4158547d6aa2c40b22ad6c07c8

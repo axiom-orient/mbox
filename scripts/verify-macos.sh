@@ -1,22 +1,42 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/Users/ax LC_ALL=C MBOX_RELEASE_STARTUP_BOUNDARY=mbox-macos-sanitized-v1 /bin/bash
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+[[ ${MBOX_RELEASE_STARTUP_BOUNDARY-} == mbox-macos-sanitized-v1 ]] || {
+  printf 'verify-macos: direct bash invocation is unsupported; use the executable path\n' >&2
+  exit 69
+}
+TMPDIR=$(/usr/bin/getconf DARWIN_USER_TEMP_DIR) || exit 69
+export TMPDIR
+[[ -d "$TMPDIR" && ! -L "$TMPDIR" ]] || exit 69
+
+SCRIPT_DIR=$(/usr/bin/dirname "${BASH_SOURCE[0]}")
+# shellcheck source=scripts/macos/release-tools.sh
+source "$SCRIPT_DIR/macos/release-tools.sh"
+export PATH="$MBOX_RELEASE_SYSTEM_PATH"
+export LC_ALL=C
+
+ROOT=$(cd "$SCRIPT_DIR/.." && "$MBOX_RELEASE_PWD_PATH" -P)
 cd "$ROOT"
 
 usage() {
-  echo "usage: $0 [--runtime-only]" >&2
+  echo "usage: $0 [--runtime-only|--release-provenance]" >&2
   exit 2
 }
 
 [[ $# -le 1 ]] || usage
 RUNTIME_ONLY=0
 if [[ $# -eq 1 ]]; then
-  [[ $1 == --runtime-only ]] || usage
-  RUNTIME_ONLY=1
+  case "$1" in
+    --runtime-only) RUNTIME_ONLY=1 ;;
+    --release-provenance)
+      mbox_release_run_script "$ROOT/scripts/macos/release-check.sh"
+      exit $?
+      ;;
+    *) usage ;;
+  esac
 fi
 
-[[ $(uname -s) == Darwin ]] || {
+[[ $($MBOX_RELEASE_UNAME_PATH -s) == Darwin ]] || {
   echo "verify-macos: must run on macOS" >&2
   exit 69
 }
@@ -24,12 +44,16 @@ fi
   echo "verify-macos: /usr/bin/sandbox-exec is unavailable" >&2
   exit 69
 }
-for command in cargo rustc; do
-  command -v "$command" >/dev/null || {
-    echo "verify-macos: $command is required" >&2
-    exit 69
-  }
-done
+mbox_release_root_tool /usr/bin/sandbox-exec || exit 69
+export MBOX_RELEASE_PROVENANCE=0
+export HOME=/Users/ax
+export RUSTUP_HOME=/Users/ax/.rustup
+mbox_release_discover_toolchain || exit 69
+export MBOX_RELEASE_PROVENANCE=1
+export RUSTC="$MBOX_RELEASE_RUSTC_PATH"
+export RUSTC_LINKER="$MBOX_RELEASE_CLANG_PATH"
+SDKROOT_RAW=$("$MBOX_RELEASE_XCRUN_PATH" --sdk macosx --show-sdk-path)
+export SDKROOT=$("$MBOX_RELEASE_REALPATH_PATH" "$SDKROOT_RAW")
 
 SEATBELT_SELF_TEST='(version 1)(deny default)(allow file-read* file-read-metadata)(allow process-exec)(allow process-fork)(allow sysctl-read)(allow mach-lookup)(allow signal (target self))'
 if ! /usr/bin/sandbox-exec -p "$SEATBELT_SELF_TEST" -- /usr/bin/true; then
@@ -39,14 +63,16 @@ fi
 echo "seatbelt functional probe: PASS"
 
 if (( ! RUNTIME_ONLY )); then
-  ./scripts/static-check.sh
-  ./scripts/macos/static-check.sh
-  cargo fmt --check
-  cargo check --all-targets --locked
-  cargo clippy --all-targets --locked -- -D warnings
-  cargo test --all-targets --locked
+  mbox_release_run_script "$ROOT/scripts/static-check.sh"
+  mbox_release_run_script "$ROOT/scripts/macos/static-check.sh"
+  mbox_release_run_cargo fmt --check
+  mbox_release_run_cargo check --all-targets --locked
+  mbox_release_run_cargo clippy --all-targets --locked -- -D warnings
+  mbox_release_run_cargo test --all-targets --locked
 fi
+
+mbox_release_run_cargo build --quiet --locked
 
 MBOX="$ROOT/target/debug/mbox" \
 PROBE="$ROOT/target/mbox-macos-sandbox-probe" \
-  "$ROOT/tests/macos/contract.sh"
+  mbox_release_run_script "$ROOT/tests/macos/contract.sh"

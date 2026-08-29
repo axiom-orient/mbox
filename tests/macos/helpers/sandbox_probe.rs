@@ -1,10 +1,12 @@
 use std::env;
+use std::ffi::CString;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
 use std::net::{Ipv6Addr, TcpListener, TcpStream, UdpSocket};
 use std::os::fd::RawFd;
 use std::os::raw::{c_char, c_int, c_ulong, c_void};
+use std::os::unix::ffi::OsStrExt;
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -79,7 +81,18 @@ unsafe extern "C" {
     fn socketpair(domain: c_int, kind: c_int, protocol: c_int, descriptors: *mut c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
     fn fork() -> c_int;
+    fn vfork() -> c_int;
     fn setsid() -> c_int;
+    fn execve(path: *const c_char, argv: *const *const c_char, envp: *const *const c_char)
+        -> c_int;
+    fn posix_spawn(
+        pid: *mut c_int,
+        path: *const c_char,
+        file_actions: *const c_void,
+        attributes: *const c_void,
+        argv: *const *const c_char,
+        envp: *const *const c_char,
+    ) -> c_int;
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
     fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
     fn _exit(status: c_int) -> !;
@@ -251,6 +264,57 @@ fn main() -> io::Result<()> {
                 io::Error::new(io::ErrorKind::InvalidInput, "missing setsid pid file")
             })?;
             probe_setsid_escape(&pid_file)
+        }
+        Some("setsid-marker") => {
+            let marker = args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "missing setsid marker")
+            })?;
+            probe_setsid_marker(&marker)
+        }
+        Some("fork-marker") => {
+            let marker = args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "missing fork marker")
+            })?;
+            probe_fork_marker(&marker)
+        }
+        Some("vfork-marker") => {
+            let marker = args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "missing vfork marker")
+            })?;
+            probe_vfork_marker(&marker)
+        }
+        Some("posix-spawn-marker") => {
+            let marker = args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "missing posix_spawn marker")
+            })?;
+            probe_posix_spawn_marker(&marker)
+        }
+        Some("background-marker") => {
+            let marker = args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "missing background marker")
+            })?;
+            probe_fork_marker(&marker)
+        }
+        Some("thread-only") => probe_thread_only(),
+        Some("thread-hold") => {
+            let seconds = args
+                .next()
+                .and_then(|value| value.to_str().and_then(|value| value.parse::<u64>().ok()))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid seconds"))?;
+            probe_thread_hold(seconds)
+        }
+        Some("self-reexec") => {
+            let expected_image = args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "missing expected image")
+            })?;
+            let phase = args.next();
+            probe_self_reexec(&expected_image, phase.as_deref())
+        }
+        Some("exec-bash") => {
+            let marker = args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "missing exec marker")
+            })?;
+            probe_exec_bash(&marker)
         }
         Some("proxy-hold") => {
             let domain = args
@@ -532,6 +596,199 @@ fn probe_setsid_escape(pid_file: &std::ffi::OsStr) -> io::Result<()> {
     }
     println!("SETSID-ESCAPE-UNOWNED");
     Ok(())
+}
+
+fn probe_setsid_marker(marker: &std::ffi::OsStr) -> io::Result<()> {
+    let result = unsafe { setsid() };
+    if result < 0 {
+        println!("SETSID-DENIED");
+        return Ok(());
+    }
+    fs::write(marker, b"setsid-allowed")?;
+    Err(io::Error::other("setsid unexpectedly succeeded"))
+}
+
+fn probe_fork_marker(marker: &std::ffi::OsStr) -> io::Result<()> {
+    let child = unsafe { fork() };
+    if child < 0 {
+        println!("FORK-DENIED");
+        return Ok(());
+    }
+    if child == 0 {
+        let _ = fs::write(marker, b"fork-allowed");
+        unsafe { _exit(0) };
+    }
+    let mut status = 0;
+    if unsafe { waitpid(child, &mut status, 0) } != child {
+        return Err(io::Error::last_os_error());
+    }
+    Err(io::Error::other("fork unexpectedly succeeded"))
+}
+
+fn probe_vfork_marker(marker: &std::ffi::OsStr) -> io::Result<()> {
+    let child = unsafe { vfork() };
+    if child < 0 {
+        println!("VFORK-DENIED");
+        return Ok(());
+    }
+    if child == 0 {
+        unsafe { _exit(0) };
+    }
+    let mut status = 0;
+    if unsafe { waitpid(child, &mut status, 0) } != child {
+        return Err(io::Error::last_os_error());
+    }
+    fs::write(marker, b"vfork-allowed")?;
+    Err(io::Error::other("vfork unexpectedly succeeded"))
+}
+
+fn probe_posix_spawn_marker(marker: &std::ffi::OsStr) -> io::Result<()> {
+    let path = CString::new("/usr/bin/true").unwrap();
+    let argv = [path.as_ptr(), std::ptr::null()];
+    let envp = [std::ptr::null()];
+    let mut child = 0;
+    let result = unsafe {
+        posix_spawn(
+            &mut child,
+            path.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+        )
+    };
+    if result != 0 {
+        println!("POSIX-SPAWN-DENIED");
+        return Ok(());
+    }
+    let mut status = 0;
+    if unsafe { waitpid(child, &mut status, 0) } != child {
+        return Err(io::Error::last_os_error());
+    }
+    fs::write(marker, b"posix-spawn-allowed")?;
+    Err(io::Error::other("posix_spawn unexpectedly succeeded"))
+}
+
+fn probe_exec_bash(marker: &std::ffi::OsStr) -> io::Result<()> {
+    let path = CString::new("/bin/bash").unwrap();
+    let option = CString::new("-c").unwrap();
+    let script = CString::new("printf exec-bash-allowed > \"$1\"").unwrap();
+    let argv0 = CString::new("bash").unwrap();
+    let marker =
+        CString::new(marker.to_str().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "exec marker must be UTF-8")
+        })?)
+        .unwrap();
+    let argv = [
+        path.as_ptr(),
+        option.as_ptr(),
+        script.as_ptr(),
+        argv0.as_ptr(),
+        marker.as_ptr(),
+        std::ptr::null(),
+    ];
+    let envp = [std::ptr::null()];
+    if unsafe { execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr()) } == 0 {
+        unreachable!("execve does not return after success");
+    }
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("exec-bash denied: {}", io::Error::last_os_error()),
+    ))
+}
+
+fn probe_thread_only() -> io::Result<()> {
+    thread::spawn(|| {})
+        .join()
+        .map_err(|_| io::Error::other("thread panicked"))?;
+    println!("THREAD-ONLY");
+    Ok(())
+}
+
+fn probe_thread_hold(seconds: u64) -> io::Result<()> {
+    let worker = thread::spawn(move || thread::sleep(Duration::from_secs(seconds)));
+    println!("THREAD-HOLD-READY");
+    io::stdout().flush()?;
+    worker
+        .join()
+        .map_err(|_| io::Error::other("thread panicked"))
+}
+
+fn probe_self_reexec(
+    expected_image: &std::ffi::OsStr,
+    phase: Option<&std::ffi::OsStr>,
+) -> io::Result<()> {
+    let executable = fs::canonicalize(env::current_exe()?)?;
+    let expected = fs::canonicalize(expected_image)?;
+    if executable != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "self-reexec image mismatch: expected `{}`, observed `{}`",
+                expected.display(),
+                executable.display()
+            ),
+        ));
+    }
+    let identity = read_process_identity(process::id() as c_int).map_err(|status| {
+        io::Error::other(format!(
+            "could not read self-reexec process identity (status {status})"
+        ))
+    })?;
+    let identity = format_identity(identity);
+    let after_marker = std::ffi::OsStr::new("--after-self-reexec");
+
+    match phase {
+        Some(marker) if marker == after_marker => {
+            println!("SELF-REEXEC-AFTER {identity}");
+            println!("SELF-REEXEC-IMAGE {}", executable.display());
+            io::stdout().flush()
+        }
+        Some(marker) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unknown self-reexec phase `{}`", marker.to_string_lossy()),
+        )),
+        None => {
+            println!("SELF-REEXEC-BEFORE {identity}");
+            println!("SELF-REEXEC-IMAGE {}", executable.display());
+            io::stdout().flush()?;
+
+            let executable = CString::new(executable.as_os_str().as_bytes()).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "self-reexec executable path contains NUL",
+                )
+            })?;
+            let command = CString::new("self-reexec").unwrap();
+            let expected = CString::new(expected.as_os_str().as_bytes()).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "self-reexec expected image contains NUL",
+                )
+            })?;
+            let marker = CString::new(after_marker.as_bytes()).unwrap();
+            let argv = [
+                executable.as_ptr(),
+                command.as_ptr(),
+                expected.as_ptr(),
+                marker.as_ptr(),
+                std::ptr::null(),
+            ];
+            let envp = [std::ptr::null()];
+            let result = unsafe { execve(executable.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "self-reexec denied: {result}: {}",
+                    io::Error::last_os_error()
+                ),
+            ))
+        }
+    }
+}
+
+fn format_identity(identity: (u32, u64, u64)) -> String {
+    format!("{}|{}|{}", identity.0, identity.1, identity.2)
 }
 
 fn probe_tty_injection() -> io::Result<()> {
