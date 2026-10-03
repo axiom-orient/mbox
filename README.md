@@ -96,3 +96,7 @@ AJ records the `setsid(2)`/double-fork limitation.
 `--runtime-only` skips formatting, lint, and Rust unit tests, but still performs
 a locked debug build and the native contract. A successful build on one OS is
 not proof for the other backend.
+
+## GitHub 배포 분류
+
+mbox의 주 제품은 사람이 직접 실행하는 native sandbox CLI이므로 목표 조직은 [`AxiomOrient`](https://github.com/AxiomOrient)다. 현재 `axiom-orient` 원격은 외부 소비자와 링크를 확인한 뒤 안전하게 transfer하기 전까지 유지한다.

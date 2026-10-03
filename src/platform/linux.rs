@@ -1,7 +1,7 @@
 use super::fd;
 use super::seccomp;
 use super::PreparedCommand;
-use crate::plan::{AccessKind, AccessRoot, ExecutionPlan};
+use crate::plan::{AccessKind, AccessRoot, ExecutionPlan, NetworkPolicy};
 use std::collections::BTreeSet;
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, File};
@@ -109,7 +109,7 @@ pub fn prepare(plan: &ExecutionPlan) -> io::Result<PreparedCommand> {
             "`--no-child-processes` is supported only on macOS; Linux setup aborted",
         ));
     }
-    if !plan.allow_net.is_empty() {
+    if matches!(plan.network, NetworkPolicy::ExactDomains(_)) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "`--allow-net` exact-domain egress is not implemented on Linux; setup aborted",
@@ -137,7 +137,7 @@ pub fn prepare(plan: &ExecutionPlan) -> io::Result<PreparedCommand> {
     let bwrap = trusted_bwrap()?;
     validate_bwrap_version(&bwrap)?;
     let mount_setup = prepare_mounts(plan)?;
-    let filter = seccomp::create_filter_file(plan.network)?;
+    let filter = seccomp::create_filter_file(matches!(plan.network, NetworkPolicy::Native))?;
     let filter_fd = filter.as_raw_fd();
 
     let mut command = Command::new(bwrap);
@@ -159,7 +159,7 @@ fn prepare_mounts(plan: &ExecutionPlan) -> io::Result<MountSetup> {
     for path in RUNTIME_PATHS.iter().chain(COMPATIBILITY_PATHS) {
         add_system_path(&mut setup, &mut read_directories, Path::new(path))?;
     }
-    if plan.network {
+    if matches!(plan.network, NetworkPolicy::Native) {
         for path in NETWORK_PATHS {
             add_system_path(&mut setup, &mut read_directories, Path::new(path))?;
         }
@@ -202,7 +202,7 @@ fn compile_args(
     push(&mut args, "--unshare-pid");
     push(&mut args, "--unshare-ipc");
     push(&mut args, "--unshare-uts");
-    if !plan.network {
+    if !matches!(plan.network, NetworkPolicy::Native) {
         push(&mut args, "--unshare-net");
     }
     push_pair(&mut args, "--cap-drop", "ALL");
@@ -582,7 +582,7 @@ mod tests {
         AccessKind, MountHandle, MountSetup, Version, COMPATIBILITY_PATHS, NETWORK_PATHS,
         RUNTIME_PATHS,
     };
-    use crate::plan::{AccessRoot, ExecutionPlan};
+    use crate::plan::{AccessRoot, ExecutionPlan, NetworkPolicy};
     use std::collections::{BTreeMap, BTreeSet};
     use std::ffi::OsString;
     use std::fs;
@@ -693,8 +693,7 @@ mod tests {
             }],
             tmp: None,
             environment: BTreeMap::new(),
-            network: false,
-            allow_net: Vec::new(),
+            network: NetworkPolicy::Denied,
             deny_writes: Vec::new(),
             no_child_processes: false,
         };
@@ -751,8 +750,7 @@ mod tests {
             writes: Vec::new(),
             tmp: None,
             environment: BTreeMap::new(),
-            network: false,
-            allow_net: Vec::new(),
+            network: NetworkPolicy::Denied,
             deny_writes: Vec::new(),
             no_child_processes: false,
         };

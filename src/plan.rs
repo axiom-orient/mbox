@@ -1,4 +1,4 @@
-use crate::cli::Request;
+use crate::cli::{NetworkRequest, Request};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -20,6 +20,13 @@ pub struct AccessRoot {
     pub kind: AccessKind,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkPolicy {
+    Denied,
+    Native,
+    ExactDomains(Vec<String>),
+}
+
 #[derive(Debug)]
 pub struct ExecutionPlan {
     pub program: PathBuf,
@@ -30,17 +37,28 @@ pub struct ExecutionPlan {
     pub writes: Vec<AccessRoot>,
     pub tmp: Option<PathBuf>,
     pub environment: BTreeMap<OsString, OsString>,
-    pub network: bool,
-    pub allow_net: Vec<String>,
+    pub network: NetworkPolicy,
     pub deny_writes: Vec<AccessRoot>,
     pub no_child_processes: bool,
 }
 
 impl ExecutionPlan {
     pub fn build(request: Request) -> Result<Self, String> {
-        if request.network && !request.allow_net.is_empty() {
-            return Err("`--network` cannot be combined with `--allow-net`".to_string());
-        }
+        let network = match &request.network {
+            NetworkRequest::Denied => NetworkPolicy::Denied,
+            NetworkRequest::Native => NetworkPolicy::Native,
+            NetworkRequest::ExactDomains(domains) => {
+                if domains.is_empty() {
+                    return Err("exact-domain network requires a domain".into());
+                }
+                NetworkPolicy::ExactDomains(
+                    domains
+                        .iter()
+                        .map(|d| normalize_domain(d))
+                        .collect::<Result<_, _>>()?,
+                )
+            }
+        };
         let process_cwd = env::current_dir()
             .map_err(|error| format!("cannot read current directory: {error}"))?;
         let cwd_input = request.cwd.as_deref().unwrap_or(&process_cwd);
@@ -89,12 +107,6 @@ impl ExecutionPlan {
             reject_hardlinks_under(root)?;
         }
 
-        let allow_net = request
-            .allow_net
-            .iter()
-            .map(|domain| normalize_domain(domain))
-            .collect::<Result<Vec<_>, _>>()?;
-
         let write_index = AuthorityIndex::new(&writes);
         reads.retain(|read| !write_index.covers(&read.path));
         let reads = minimize_roots(reads);
@@ -108,8 +120,7 @@ impl ExecutionPlan {
             writes,
             tmp,
             environment,
-            network: request.network,
-            allow_net,
+            network,
             deny_writes,
             no_child_processes: request.no_child_processes,
         })
@@ -620,7 +631,7 @@ mod tests {
         is_launcher_sensitive, is_platform_owned, minimize_roots, normalize_domain,
         reject_hardlinked_regular_file, AccessKind, AccessRoot, ExecutionPlan,
     };
-    use crate::cli::Request;
+    use crate::cli::{NetworkRequest, Request};
     use std::ffi::OsStr;
     use std::fs;
     use std::path::PathBuf;
@@ -683,8 +694,7 @@ mod tests {
             reads: Vec::new(),
             writes: Vec::new(),
             tmp: None,
-            network: false,
-            allow_net: Vec::new(),
+            network: NetworkRequest::Denied,
             deny_writes: Vec::new(),
             no_child_processes: true,
             env_names: Vec::new(),
@@ -733,8 +743,7 @@ mod tests {
             reads: Vec::new(),
             writes: vec![root.clone()],
             tmp: None,
-            network: false,
-            allow_net: Vec::new(),
+            network: NetworkRequest::Denied,
             deny_writes: vec![PathBuf::from(".git")],
             no_child_processes: false,
             env_names: Vec::new(),

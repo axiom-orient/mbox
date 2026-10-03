@@ -1,6 +1,6 @@
 use super::macos_proxy::ProxyRuntime;
 use super::PreparedCommand;
-use crate::plan::{AccessKind, AccessRoot, ExecutionPlan};
+use crate::plan::{AccessKind, AccessRoot, ExecutionPlan, NetworkPolicy};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
@@ -116,7 +116,7 @@ pub fn establish_process_group_leader() -> io::Result<()> {
 pub fn prepare(plan: &ExecutionPlan) -> io::Result<PreparedCommand> {
     validate_system_executable(Path::new(SANDBOX_EXEC))?;
     if plan.no_child_processes {
-        if !plan.allow_net.is_empty() {
+        if matches!(plan.network, NetworkPolicy::ExactDomains(_)) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "`--no-child-processes` cannot be combined with macOS `--allow-net`; setup aborted",
@@ -140,13 +140,12 @@ pub fn prepare(plan: &ExecutionPlan) -> io::Result<PreparedCommand> {
     // ambient descriptors first so no pre-existing descriptor can be
     // inherited by those threads or the target. Newly-created sockets carry
     // CLOEXEC in macos_proxy; no filesystem/allocator work runs after fork.
-    if !plan.allow_net.is_empty() {
+    if matches!(plan.network, NetworkPolicy::ExactDomains(_)) {
         super::fd::close_inherited(&[])?;
     }
-    let mut proxy = if plan.allow_net.is_empty() {
-        None
-    } else {
-        Some(ProxyRuntime::start(&plan.allow_net)?)
+    let mut proxy = match &plan.network {
+        NetworkPolicy::ExactDomains(domains) => Some(ProxyRuntime::start(domains)?),
+        _ => None,
     };
     let proxy_port = proxy.as_ref().map(ProxyRuntime::port);
     let policy = compile_policy(
@@ -154,7 +153,7 @@ pub fn prepare(plan: &ExecutionPlan) -> io::Result<PreparedCommand> {
         &writes,
         &plan.deny_writes,
         &plan.program,
-        plan.network,
+        &plan.network,
         proxy_port,
         plan.no_child_processes,
     );
@@ -505,7 +504,7 @@ fn compile_policy(
     writes: &[AccessRoot],
     deny_writes: &[AccessRoot],
     executable: &Path,
-    network: bool,
+    network: &NetworkPolicy,
     proxy_port: Option<u16>,
     no_child_processes: bool,
 ) -> String {
@@ -534,7 +533,7 @@ fn compile_policy(
         );
     }
 
-    if network {
+    if matches!(network, NetworkPolicy::Native) {
         policy.push_str(
             r#"
 ; Explicit full native network access.
@@ -1154,7 +1153,7 @@ mod tests {
         validate_native_executable, ByteOrder, SigInfo, SignalGuard, HOST_CPU_TYPE, LC_MAIN,
         MH_EXECUTE, PENDING_SIGNALS, SIGNAL_TERM, SIGTERM,
     };
-    use crate::plan::{AccessKind, AccessRoot, ExecutionPlan};
+    use crate::plan::{AccessKind, AccessRoot, ExecutionPlan, NetworkPolicy};
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fs;
@@ -1281,7 +1280,7 @@ mod tests {
             &[],
             &[],
             Path::new("/a/program"),
-            false,
+            &NetworkPolicy::Denied,
             None,
             false,
         );
@@ -1306,7 +1305,7 @@ mod tests {
             }],
             &[],
             Path::new("/a/program"),
-            false,
+            &NetworkPolicy::Denied,
             None,
             false,
         );
@@ -1321,7 +1320,15 @@ mod tests {
 
     #[test]
     fn policy_does_not_grant_ambient_user_filesystem_access() {
-        let policy = compile_policy(&[], &[], &[], Path::new("/a/program"), false, None, false);
+        let policy = compile_policy(
+            &[],
+            &[],
+            &[],
+            Path::new("/a/program"),
+            &NetworkPolicy::Denied,
+            None,
+            false,
+        );
         assert!(policy.contains(
             r#"(allow file-read-data file-read-metadata file-test-existence (literal "/"))"#
         ));
@@ -1352,7 +1359,7 @@ mod tests {
             }],
             &[],
             executable,
-            false,
+            &NetworkPolicy::Denied,
             None,
             false,
         );
@@ -1367,7 +1374,15 @@ mod tests {
 
     #[test]
     fn policy_subtracts_terminal_input_injection_after_tty_grants() {
-        let policy = compile_policy(&[], &[], &[], Path::new("/a/program"), false, None, false);
+        let policy = compile_policy(
+            &[],
+            &[],
+            &[],
+            Path::new("/a/program"),
+            &NetworkPolicy::Denied,
+            None,
+            false,
+        );
         let tty_grant = policy.find("file-write* file-ioctl").unwrap();
         let tiocsti_deny = policy
             .rfind("(deny file-ioctl (ioctl-command #x80017472))")
@@ -1382,7 +1397,7 @@ mod tests {
             &[],
             &[],
             Path::new("/a/program"),
-            false,
+            &NetworkPolicy::ExactDomains(vec!["api.openai.com".into()]),
             Some(43127),
             false,
         );
@@ -1398,7 +1413,7 @@ mod tests {
             &[],
             &[],
             Path::new("/workspace/tool"),
-            false,
+            &NetworkPolicy::Denied,
             None,
             true,
         );
@@ -1664,7 +1679,7 @@ mod tests {
             }],
             &[protected],
             Path::new("/workspace/tool"),
-            false,
+            &NetworkPolicy::Denied,
             None,
             false,
         );
@@ -1688,8 +1703,7 @@ mod tests {
             writes: Vec::new(),
             tmp: None,
             environment: BTreeMap::new(),
-            network: false,
-            allow_net: Vec::new(),
+            network: NetworkPolicy::Denied,
             deny_writes: Vec::new(),
             no_child_processes: false,
         };

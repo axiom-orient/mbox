@@ -104,7 +104,7 @@ mbox_release_run_script() {
 # the primary gate; the digest makes a changed utility fail closed before it
 # can be used for a provenance decision.  Same-account host mutation remains
 # outside this protocol's proof boundary.
-MBOX_RELEASE_SHA256SUM_SHA256=881f3812ac7be70d99bf635e5322b63f565af66f502be3b464036fef8f927300
+MBOX_RELEASE_SHA256SUM_SHA256=701ee0e1329b889fb4614308bc25588686582b02f0751105a0de26d255fe1368
 MBOX_RELEASE_SHASUM_SHA256=0812595f981a26f813d98dc380af14d4af427626c9339eda29eb849ae13de1e3
 
 mbox_release_fail() {

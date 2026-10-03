@@ -33,13 +33,19 @@ There are no profiles, configuration files, compatibility aliases, or fallbacks.
 );
 
 #[derive(Debug, Clone)]
+pub enum NetworkRequest {
+    Denied,
+    Native,
+    ExactDomains(Vec<OsString>),
+}
+
+#[derive(Debug, Clone)]
 pub struct Request {
     pub cwd: Option<PathBuf>,
     pub reads: Vec<PathBuf>,
     pub writes: Vec<PathBuf>,
     pub tmp: Option<PathBuf>,
-    pub network: bool,
-    pub allow_net: Vec<OsString>,
+    pub network: NetworkRequest,
     pub deny_writes: Vec<PathBuf>,
     pub no_child_processes: bool,
     pub env_names: Vec<OsString>,
@@ -67,8 +73,7 @@ where
         reads: Vec::new(),
         writes: Vec::new(),
         tmp: None,
-        network: false,
-        allow_net: Vec::new(),
+        network: NetworkRequest::Denied,
         deny_writes: Vec::new(),
         no_child_processes: false,
         env_names: Vec::new(),
@@ -82,9 +87,6 @@ where
             request.command.extend(args);
             if request.command.is_empty() {
                 return Err("missing COMMAND after `--`".to_string());
-            }
-            if request.network && !request.allow_net.is_empty() {
-                return Err("`--network` cannot be combined with `--allow-net`".to_string());
             }
             return Ok(Action::Run(Box::new(request)));
         }
@@ -108,10 +110,22 @@ where
             Some("--tmp") => {
                 set_once_path(&mut request.tmp, next_value(&mut args, "--tmp")?, "--tmp")?;
             }
-            Some("--network") => request.network = true,
-            Some("--allow-net") => request
-                .allow_net
-                .push(next_value(&mut args, "--allow-net")?),
+            Some("--network") => match request.network {
+                NetworkRequest::Denied | NetworkRequest::Native => {
+                    request.network = NetworkRequest::Native
+                }
+                _ => return Err("network modes cannot be combined".into()),
+            },
+            Some("--allow-net") => {
+                let domain = next_value(&mut args, "--allow-net")?;
+                match &mut request.network {
+                    NetworkRequest::Denied => {
+                        request.network = NetworkRequest::ExactDomains(vec![domain])
+                    }
+                    NetworkRequest::ExactDomains(domains) => domains.push(domain),
+                    _ => return Err("network modes cannot be combined".into()),
+                }
+            }
             Some("--deny-write") => request
                 .deny_writes
                 .push(PathBuf::from(next_value(&mut args, "--deny-write")?)),
@@ -175,7 +189,7 @@ fn split_assignment(value: OsString) -> Result<(OsString, OsString), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Action, HELP};
+    use super::{parse, Action, NetworkRequest, HELP};
     use std::ffi::OsString;
     use std::path::PathBuf;
 
@@ -231,7 +245,9 @@ mod tests {
         .unwrap() else {
             panic!("expected run");
         };
-        assert_eq!(request.allow_net, argv(&["api.openai.com"]));
+        assert!(
+            matches!(request.network, NetworkRequest::ExactDomains(ref domains) if domains == &argv(&["api.openai.com"]))
+        );
         assert_eq!(request.deny_writes, vec![PathBuf::from(".git")]);
         assert!(request.inherit_env);
         assert_eq!(request.reads.len(), 1);
