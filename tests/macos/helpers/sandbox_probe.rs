@@ -258,7 +258,7 @@ fn main() -> io::Result<()> {
             let address = "93.184.216.34:443".parse().unwrap();
             TcpStream::connect_timeout(&address, Duration::from_secs(2)).map(|_| ())
         }
-        Some("proxy-abuse") => probe_proxy_abuse(),
+        Some("proxy-abuse") => proxy_abuse(),
         Some("setsid-escape") => {
             let pid_file = args.next().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "missing setsid pid file")
@@ -325,19 +325,7 @@ fn main() -> io::Result<()> {
                 .next()
                 .and_then(|value| value.to_str().and_then(|value| value.parse::<u64>().ok()))
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid seconds"))?;
-            let proxy = env::var("HTTPS_PROXY")
-                .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HTTPS_PROXY missing"))?;
-            let endpoint = proxy
-                .strip_prefix("http://")
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unsupported proxy"))?;
-            let endpoint = endpoint
-                .rsplit_once(':')
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid proxy"))?;
-            let proxy_address = format!("{}:{}", endpoint.0, endpoint.1)
-                .parse()
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "invalid proxy address")
-                })?;
+            let proxy_address = proxy_address()?;
             let mut stream = TcpStream::connect_timeout(&proxy_address, Duration::from_secs(3))?;
             stream.set_read_timeout(Some(Duration::from_secs(3)))?;
             stream.write_all(
@@ -506,7 +494,7 @@ fn probe_raw_dns() -> io::Result<()> {
     }
 }
 
-fn proxy_abuse() -> io::Result<()> {
+fn proxy_address() -> io::Result<std::net::SocketAddr> {
     let proxy = env::var("HTTPS_PROXY")
         .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HTTPS_PROXY missing"))?;
     let endpoint = proxy
@@ -515,9 +503,13 @@ fn proxy_abuse() -> io::Result<()> {
     let endpoint = endpoint
         .rsplit_once(':')
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid proxy"))?;
-    let proxy_address = format!("{}:{}", endpoint.0, endpoint.1)
+    format!("{}:{}", endpoint.0, endpoint.1)
         .parse()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid proxy address"))?;
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid proxy address"))
+}
+
+fn proxy_abuse() -> io::Result<()> {
+    let proxy_address = proxy_address()?;
 
     // Hold more partial headers than the worker cap, then reset a second
     // batch. The bounded header deadline must release the held workers.
@@ -551,10 +543,6 @@ fn proxy_abuse() -> io::Result<()> {
             "proxy did not recover after bounded abuse",
         ))
     }
-}
-
-fn probe_proxy_abuse() -> io::Result<()> {
-    proxy_abuse()
 }
 
 fn probe_setsid_escape(pid_file: &std::ffi::OsStr) -> io::Result<()> {

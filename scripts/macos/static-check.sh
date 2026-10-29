@@ -42,8 +42,15 @@ test -f AGENTS.md
 test -f README.md
 test -f src/main.rs
 test -f src/plan.rs
+test -f src/plan/environment.rs
+test -f src/plan/roots.rs
 test -f src/platform/macos.rs
+test -f src/platform/macos/macho.rs
+test -f src/platform/macos/policy.rs
+test -f src/platform/macos/supervisor.rs
 test -f src/platform/macos_proxy.rs
+test -f src/platform/macos_proxy/tls.rs
+test -f src/platform/macos_proxy/resolver.rs
 test -f src/platform/macos_base.sbpl
 test -f src/platform/macos_platform.sbpl
 test -f docs/MACOS_VERIFICATION.md
@@ -58,6 +65,7 @@ test -x scripts/verify-macos.sh
 test -x scripts/macos/release-check.sh
 test -x tests/macos/contract.sh
 test -f tests/macos/helpers/sandbox_probe.rs
+test -f tests/macos/interactive_pty.py
 
 for path in \
   scripts/verify.sh scripts/verify-macos.sh scripts/static-check.sh \
@@ -154,48 +162,48 @@ fi
 grep -q 'target_os = "macos"' src/platform/mod.rs
 grep -q 'sandbox-exec' src/platform/macos.rs
 grep -q 'validate_private_tmp' src/platform/macos.rs
-grep -q 'path-ancestors (param' src/platform/macos.rs
+grep -q 'path-ancestors (param' src/platform/macos/policy.rs
 grep -q -- '--tmp' src/cli.rs
-if grep -nE 'create_private_scratch|\.mbox-' src/platform/macos.rs; then
+if grep -nE 'create_private_scratch|\.mbox-' src/platform/macos.rs src/platform/macos/*.rs; then
   echo "macos static-check: automatic scratch allocation detected" >&2
   exit 1
 fi
 grep -q '(deny default)' src/platform/macos_base.sbpl
-grep -q '(ioctl-command #x80017472)' src/platform/macos.rs
-grep -q 'param "EXECUTABLE"' src/platform/macos.rs
-grep -q 'deny file-write\*' src/platform/macos.rs
+grep -q '(ioctl-command #x80017472)' src/platform/macos/policy.rs
+grep -q 'param "EXECUTABLE"' src/platform/macos/policy.rs
+grep -q 'deny file-write\*' src/platform/macos/policy.rs
 grep -q -- '--allow-net' src/cli.rs
 grep -q -- '--deny-write' src/cli.rs
 grep -q -- '--no-child-processes' src/cli.rs
 grep -q 'validate_native_executable' src/platform/macos.rs
-grep -q 'read_at' src/platform/macos.rs
-grep -q 'MAX_FAT_ARCHES' src/platform/macos.rs
-grep -q 'on-disk fat' src/platform/macos.rs
-grep -q '32-bit Mach-O is not executable' src/platform/macos.rs
-grep -q 'fat32-cigam' src/platform/macos.rs
-grep -q 'fat64-cigam' src/platform/macos.rs
-grep -q 'MAX_LOAD_COMMANDS' src/platform/macos.rs
-grep -q 'MAX_LOAD_COMMAND_BYTES' src/platform/macos.rs
-grep -q 'HOST_BYTE_ORDER' src/platform/macos.rs
-grep -q 'LC_MAIN' src/platform/macos.rs
-grep -q 'LC_UNIXTHREAD' src/platform/macos.rs
-grep -q 'establish_process_group_leader' src/platform/macos.rs
-grep -q '(deny process-fork)' src/platform/macos.rs
-grep -q '(deny process-exec)' src/platform/macos.rs
+grep -q 'read_at' src/platform/macos/macho.rs
+grep -q 'MAX_FAT_ARCHES' src/platform/macos/macho.rs
+grep -q 'on-disk fat' src/platform/macos/macho.rs
+grep -q '32-bit Mach-O is not executable' src/platform/macos/macho.rs
+grep -q 'fat32-cigam' src/platform/macos/macho.rs
+grep -q 'fat64-cigam' src/platform/macos/macho.rs
+grep -q 'MAX_LOAD_COMMANDS' src/platform/macos/macho.rs
+grep -q 'MAX_LOAD_COMMAND_BYTES' src/platform/macos/macho.rs
+grep -q 'HOST_BYTE_ORDER' src/platform/macos/macho.rs
+grep -q 'LC_MAIN' src/platform/macos/macho.rs
+grep -q 'LC_UNIXTHREAD' src/platform/macos/macho.rs
+grep -q 'establish_process_group_leader' src/platform/macos/supervisor.rs
+grep -q '(deny process-fork)' src/platform/macos/policy.rs
+grep -q '(deny process-exec)' src/platform/macos/policy.rs
 grep -q 'with_process_group_leader' src/platform/mod.rs
 grep -q 'ProxyRuntime' src/platform/macos.rs
-grep -q 'process_group(0)' src/platform/macos.rs
-grep -q 'WAIT_WNOWAIT' src/platform/macos.rs
-grep -q 'sigprocmask' src/platform/macos.rs
+grep -q 'process_group(0)' src/platform/macos/supervisor.rs
+grep -q 'WAIT_WNOWAIT' src/platform/macos/supervisor.rs
+grep -q 'sigprocmask' src/platform/macos/supervisor.rs
 grep -q 'close_inherited(&\[\])' src/platform/macos.rs
-grep -q 'remote ip "localhost:' src/platform/macos.rs
+grep -q 'remote ip "localhost:' src/platform/macos/policy.rs
 grep -q 'MAX_CONNECTIONS' src/platform/macos_proxy.rs
-grep -q 'MAX_RESOLVER_HELPERS' src/platform/macos_proxy.rs
-grep -q 'ClientHelloParser' src/platform/macos_proxy.rs
-grep -q 'MAX_TLS_CLIENT_HELLO_BYTES' src/platform/macos_proxy.rs
-grep -q '0xfe0d' src/platform/macos_proxy.rs
-grep -q 'recv_timeout' src/platform/macos_proxy.rs
-grep -q 'file-link' src/platform/macos.rs
+grep -q 'MAX_RESOLVER_HELPERS' src/platform/macos_proxy/resolver.rs
+grep -q 'ClientHelloParser' src/platform/macos_proxy/tls.rs
+grep -q 'MAX_TLS_CLIENT_HELLO_BYTES' src/platform/macos_proxy/tls.rs
+grep -q '0xfe0d' src/platform/macos_proxy/tls.rs
+grep -q 'recv_timeout' src/platform/macos_proxy/resolver.rs
+grep -q 'file-link' src/platform/macos/policy.rs
 grep -q 'reject_hardlinks' src/plan.rs
 grep -q 'unset HTTP_PROXY' tests/macos/contract.sh
 grep -q 'proxy-hold' tests/macos/contract.sh

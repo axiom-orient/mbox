@@ -175,6 +175,30 @@ Darwin native cache APIs; those APIs require an explicit write root such as
 the installed toolchain, and add explicit user configuration reads when the
 tool requires them.
 
+To extend the same explicit developer-tool grant to a small native build,
+create the source and output directory in `WORK`, select the installed SDK,
+and invoke the selected compiler:
+
+```sh
+mkdir -p "$WORK/out"
+printf '#include <stdio.h>\nint main(void) { puts("mbox-native-build"); return 0; }\n' > "$WORK/main.c"
+SDKROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
+
+mbox --cwd "$WORK" \
+  --read /private/var/select \
+  --read "$XCODE_CONTENTS" --read "$TOOL_PREFIX" \
+  --write "$DARWIN_USER_TEMP" --write "$ISOLATED_HOME" --write "$WORK/out" \
+  --tmp "$CALLER_TMP" --set-env "HOME=$ISOLATED_HOME" -- \
+  "$TOOL_PREFIX/clang" -isysroot "$SDKROOT" "$WORK/main.c" -o "$WORK/out/hello"
+
+mbox --cwd "$WORK" --no-child-processes -- "$WORK/out/hello"
+```
+
+This example uses the variables and caller-owned directories from the preceding
+recipe. It exercises a compiler with subprocesses, then executes the resulting
+native image under the separate strict contract. It does not make Xcode an
+ambient capability or change the core verification dependencies.
+
 ## Terminal boundary
 
 Standard streams and an interactive terminal remain direct native I/O. The
@@ -188,8 +212,12 @@ This is the smallest mitigation that preserves direct stdio, foreground
 process-group signals, and original exit behavior on direct-exec paths. Exact
 network mode uses a narrow process-group supervisor only to own its proxy and
 tunnel cleanup. Its tty handoff path blocks `SIGTTOU` while attempting to
-restore the caller's foreground group; full interactive PTY handoff/restoration
-is `[UNVERIFIED]` by the current native gate and is not a release claim.
+restore the caller's foreground group. The core native gate does not exercise
+interactive exact-mode handoff/restoration. The separate optional
+[`interactive_pty.py`](../../tests/macos/interactive_pty.py) check observes real
+input, terminal Ctrl-C, target PID/PGID, foreground restoration, and subsequent
+caller input. Its pass applies to that binary, host, and tested interactions;
+it does not establish every job-control timing or a broader lifecycle guarantee.
 
 ## Network authority
 

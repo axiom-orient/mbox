@@ -9,6 +9,11 @@ the run record and resource controls.
 
 ## 1. Preflight and release identity
 
+Use Rustup with `rust-toolchain.toml` for repository builds. The pin selects
+the exact compiler and its `rustfmt`, `clippy`, and `llvm-tools` components.
+The crate declares Rust 1.85 as its minimum compiler; that does not replace
+validation of the selected release toolchain.
+
 Run from the mbox repository root and record the source, lockfile, compiler,
 host, and native launcher:
 
@@ -85,6 +90,12 @@ The macOS gate requires a functional trusted `/usr/bin/sandbox-exec` and
 0.10+ launcher, supported `x86_64`/`aarch64` architecture, user namespaces,
 and seccomp. A gate on the wrong OS exits `69`; it is an environment block, not
 permission to use a weaker launcher. Never report Linux proof from Darwin.
+
+The verifier consumes an existing record rather than generating it. After a
+source or toolchain change, retain the previous receipt, measure candidate
+values from actual fixed-path builds, and rerun the original full provenance
+gate before publishing a refreshed record. Do not edit expected values merely
+to suppress a failed identity check.
 
 Keep command output and host/toolchain identity with the release record. The
 repeatable procedures are in [`MACOS_VERIFICATION.md`](MACOS_VERIFICATION.md)
@@ -174,13 +185,18 @@ native contract.
 | static check passes | source/manifest/document surface checks passed |
 | macOS gate passes on Darwin | Seatbelt, proxy, lifecycle, and macOS contract passed on that host |
 | Linux gate passes on Linux | Bubblewrap, namespaces, seccomp, and Linux contract passed on that host/architecture |
+| optional macOS PTY check passes | real input, terminal Ctrl-C, foreground restoration, and follow-up input passed for the selected binary/host |
 | gate exits `69` | required host tool or native prerequisite is unavailable |
 | gate exits `1` | a check or native contract failed; investigate before promotion |
 | gate run on the other OS | not native proof |
 
 The macOS exact-domain scenarios retain the initial-TLS-SNI and
-`setsid`/double-fork limits. Do not turn a scenario failure or an unverified
-interactive PTY handoff into a release claim.
+`setsid`/double-fork limits. When callers use interactive exact-domain commands,
+run the separate [PTY procedure](MACOS_VERIFICATION.md#optional-interactive-pty-check)
+for the selected artifact. The core gate does not run it, and a pass does not
+prove every job-control timing or escaped-descendant cleanup. A Linux guest
+pass is likewise scoped to its actual kernel and architecture; see the
+[guest procedure](LINUX_VERIFICATION.md#linux-guest-on-a-macos-host).
 
 ## 7. Failure triage
 
@@ -190,6 +206,7 @@ Classify the first observed failure before changing authority:
 |---|---|---|
 | exit `2` before target output | CLI contract | inspect `--` placement, option spelling, duplicate single-use options, and values |
 | exit `125` before target output | plan or launcher setup | inspect paths, env ownership, hardlinks, trusted launchers, platform-only options, and exact-domain syntax |
+| release stripping warns that `rust-objcopy` cannot load LLVM | toolchain components | install the pinned `llvm-tools` component and repeat the clean build; do not record the warning-producing artifact as the final release |
 | target cannot read/write an expected path | authority selection | verify canonical path, existing `--write` root, and target cwd; do not add broad roots blindly |
 | exact-domain request cannot connect | macOS proxy/SNI boundary or target proxy use | confirm exact DNS name, HTTPS port 443, initial SNI, and target proxy support; do not switch to full network without review |
 | gate exits `69` | environment | install/approve the required prerequisite or mark the host unverified; do not bypass the gate |

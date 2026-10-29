@@ -32,12 +32,18 @@ fi
 
 for path in \
   Cargo.toml Cargo.lock README.md docs/CONTRACT.md \
-  src/main.rs src/cli.rs src/plan.rs src/platform/mod.rs \
-  src/platform/fd.rs src/platform/linux.rs src/platform/seccomp.rs \
-  src/platform/macos.rs src/platform/macos_proxy.rs \
+  src/main.rs src/cli.rs src/plan.rs src/plan/environment.rs src/plan/roots.rs \
+  src/platform/mod.rs \
+  src/platform/fd.rs src/platform/linux.rs src/platform/linux/bwrap.rs \
+  src/platform/linux/mounts.rs src/platform/seccomp.rs src/platform/seccomp/tests.rs \
+  src/platform/macos.rs src/platform/macos/macho.rs \
+  src/platform/macos/policy.rs src/platform/macos/supervisor.rs \
+  src/platform/macos_proxy.rs src/platform/macos_proxy/tls.rs \
+  src/platform/macos_proxy/resolver.rs \
   src/platform/macos_base.sbpl src/platform/macos_platform.sbpl \
   tests/linux/contract.sh tests/linux/helpers/sandbox_probe.rs \
-  tests/macos/contract.sh tests/macos/helpers/sandbox_probe.rs; do
+  tests/macos/contract.sh tests/macos/helpers/sandbox_probe.rs \
+  tests/macos/interactive_pty.py; do
   [[ -f $path ]] || fail "missing $path"
 done
 

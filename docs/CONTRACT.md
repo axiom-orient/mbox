@@ -167,8 +167,11 @@ a resolver helper that the OS keeps stuck is left detached until process
 teardown rather than being falsely reported as joined. Darwin process groups do
 not follow a target that calls `setsid(2)` and double-forks; scenario AJ records
 that escaped descendant, so exact mode is not a no-survivor guarantee for such
-targets. Interactive exact-mode PTY handoff/restoration is `[UNVERIFIED]` by
-the current macOS gate.
+targets. The core macOS gate does not exercise interactive exact-mode PTY
+handoff/restoration. A separate optional
+[`interactive_pty.py`](../tests/macos/interactive_pty.py) check covers real input,
+Ctrl-C, foreground restoration, and follow-up input for the selected binary and
+host; it does not prove all scheduling or job-control cases.
 TERM cleanup has a bounded grace period followed by SIGKILL and a second
 bounded observation period; if the leader still cannot be observed as exited,
 supervision fails instead of claiming cleanup succeeded.

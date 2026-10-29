@@ -6,12 +6,11 @@
 
 ```text
 ExecutionPlan
-  → dynamic deny-by-default Seatbelt profile
-  → trusted /usr/bin/sandbox-exec
-  → trusted /bin/bash positional exec -a
-  → exact executable and caller-requested deny-write subtraction
-  → optional parent-owned exact-domain HTTPS CONNECT proxy
-  → final TIOCSTI subtraction
+  → validate trusted launchers and optional temporary directory
+  → start optional parent-owned exact-domain HTTPS CONNECT proxy
+  → compile deny-by-default Seatbelt profile, including executable,
+    deny-write and TIOCSTI subtractions
+  → /usr/bin/sandbox-exec and /bin/bash positional exec -a
   → target stdio/status/signal and bounded cleanup of the initial exact-domain process group
 ```
 
@@ -39,10 +38,11 @@ That mode cleans and rebuilds twice sequentially at the exact protocol-reserved
 directory
 `/Users/ax/repoGithub/mbox/target/.mbox-release-v2`, compares bytes, runs the complete native
 contract A-AQ + AE, and installs only the verified artifact at
-`/Users/ax/repoGithub/mbox/target/release/mbox`. The current host-specific
-record is [`RELEASE-v0.2.0.sha256`](RELEASE-v0.2.0.sha256). Its complete Mach-O
-digest is protocol-specific; this is not arbitrary-checkout path-independent
-reproducibility evidence. The record also pins the canonical absolute
+`/Users/ax/repoGithub/mbox/target/release/mbox`. The host-specific
+record is [`RELEASE-v0.2.0.sha256`](RELEASE-v0.2.0.sha256); the record gate
+checks whether its source fingerprint and toolchain match the current run. Its
+complete Mach-O digest is protocol-specific; this is not arbitrary-checkout
+path-independent reproducibility evidence. The record also pins the canonical absolute
 Cargo/rustc/rustfmt/clippy-driver paths and SHA-256 values, fixed linker/XCRun
 and hash-tool paths and digests, canonical SDK path, and both source and
 compiled release-helper digests. The verifier uses those exact binaries with a
@@ -77,6 +77,13 @@ metacharacters as data. Run `./scripts/macos/release-check.sh --self-test` to
 prove stale and hostile record copies, altered tool paths/digests, an altered
 compiled helper, and hostile `PATH` tools are rejected without modifying the
 tracked record or creating a marker.
+
+For actual terminal input, Ctrl-C, and foreground restoration, run the optional
+`python3 tests/macos/interactive_pty.py` after the native gate. Use `--mbox` to
+select the installed release binary. This separate Python 3.9+ standard-library
+check writes external evidence and does not add a dependency to the core gate.
+Its pass applies only to the selected binary, host, and tested interactions;
+see the [PTY procedure](../MACOS_VERIFICATION.md#optional-interactive-pty-check).
 
 A Linux build or static policy review is not macOS native proof.
 

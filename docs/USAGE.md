@@ -27,7 +27,10 @@ supersedes a contained read root. A `--write` root must already exist.
 
 ## 2. Build and invoke
 
-From the repository root:
+From the repository root, use Rustup with the checked-in
+`rust-toolchain.toml`. The crate minimum is Rust 1.85; the repository pin selects
+its exact compiler and `rustfmt`, `clippy`, and `llvm-tools` components. The
+LLVM tools are needed for release symbol stripping. Then build:
 
 ```sh
 cargo build --release --locked
@@ -49,13 +52,18 @@ path and must be an existing executable file.
 
 ## 3. Filesystem recipes
 
-Prepare a workspace and existing output directory:
+Prepare a new caller-owned workspace, input, and output directory. Use a
+location outside Linux's sandbox-private `/tmp` and `/dev/shm`:
 
 ```sh
-WORK="$PWD/work"
-mkdir -p "$WORK/out"
 MBOX="$PWD/target/release/mbox"
+WORK=$(mktemp -d /var/tmp/mbox-work.XXXXXX)
+mkdir -p "$WORK/out" "$WORK/.git"
+printf 'pear\napple\npear\n' > "$WORK/input.txt"
+printf 'protected\n' > "$WORK/.git/config"
 ```
+
+The caller removes this exact workspace after inspecting its outputs.
 
 Read a selected input without network access:
 
@@ -78,6 +86,18 @@ in the workspace:
 "$MBOX" --cwd "$WORK" --write "$WORK" --deny-write "$WORK/.git" -- \
   /bin/sh -c 'printf result > "$1"' sh "$WORK/result"
 ```
+
+For a complete offline file-processing request, read the input, run native
+child tools, and write only the output directory:
+
+```sh
+"$MBOX" --cwd "$WORK" --write "$WORK/out" -- \
+  /bin/sh -c 'sort input.txt | uniq -c > out/counts.txt'
+cat "$WORK/out/counts.txt"
+```
+
+The result contains one `apple` and two `pear` entries. Repeating the request
+replaces only this authorized result; mbox adds no retry or persistent state.
 
 `--deny-write` is applied after write grants and also protects a nonexistent
 leaf, but Seatbelt remains path-based. It is not an inode pin against a trusted

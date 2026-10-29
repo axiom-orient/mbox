@@ -48,7 +48,7 @@ the native Seatbelt launcher. The IDs below cover only macOS-owned behavior.
 | Z | Trigger a denied write | no partial host file remains |
 | AA | Read a sibling beside the executable | denied unless that exact sibling is explicitly read |
 | AB | Canonicalize an explicitly read nested path | canonicalization succeeds; sibling and parent data remain denied |
-| AC | Attempt TIOCSTI on a private controlling PTY | returns `EPERM`; normal tty ioctl support remains available; exact-mode interactive PTY handoff/restoration is `[UNVERIFIED]` |
+| AC | Attempt TIOCSTI on a private controlling PTY | returns `EPERM`; normal tty ioctl support remains available; interactive exact-mode behavior is checked separately below |
 | AD | Run an executable inside a writable parent | sibling removal succeeds; exact executable removal and replacement both fail |
 | AE | Clean up an owned TCP helper on normal and EXIT paths | Darwin kernel `proc_pidinfo(PROC_PIDTBSDINFO)` PID plus `pbi_start_tvsec`/`pbi_start_tvusec`; capture-failure exact-PID cleanup, mismatch refusal, bounded TERM/KILL/reap, immediate/delayed no-survivor checks; no process-group claim |
 | AH | Subtract writes at nonexistent `.git`, directory, file pointer, and hardlink aliases | create/write/remove/rename/replacement at protected paths fail; writable siblings succeed; preflight rejects protected/executable hardlinks and in-sandbox link creation |
@@ -60,12 +60,15 @@ the native Seatbelt launcher. The IDs below cover only macOS-owned behavior.
 choose explicit cwd/read/write/network authority and optional caller-owned tmp
   → reject malformed or unavailable input
   → canonicalize and build one immutable plan
-  → compile the deny-default Seatbelt policy with metadata-only root ancestors
+  → validate the system launcher and optional tmp; validate strict Mach-O or the normal Bash launcher
+  → for exact domains, close inherited descriptors before starting both parent-owned loopback listeners
+  → compile deny-default policy, dynamic roots and metadata-only ancestors; add selected network grants (exact mode: only the owned loopback port)
   → subtract writes to the exact executable, caller-protected paths, and terminal-input injection after broad grants
-  → in strict mode, validate Mach-O, append final fork/exec subtraction, observe or establish pgid == pid, and direct-exec the canonical target
-  → for exact domains, bind parent-owned ephemeral CONNECT listeners on both loopback families and grant Seatbelt only that port
-  → close inherited descriptors and supervise only the exact-domain target group
-  → observe direct stdio, status, and signal behavior (interactive exact-mode PTY restoration remains `[UNVERIFIED]`)
+  → append strict fork/exec subtraction when requested
+  → prepare command arguments and environment
+  → direct mode: establish strict pgid == pid when requested, close inherited descriptors, then native exec
+  → exact-domain mode: spawn and supervise the initial target process group
+  → observe direct stdio, status, and signal behavior (interactive exact-mode PTY uses the separate optional check below)
   → close both listeners/tunnels and join workers; target-group cleanup is bounded through TERM then KILL observation, but does not own setsid escapes
 ```
 
@@ -125,3 +128,21 @@ identity until it disappears and does not reap it because it is not the
 contract shell's child. It is a negative ownership proof: public Darwin
 process groups and audit sessions do not provide an unprivileged immutable
 descendant container/kill primitive.
+
+## Optional interactive scenarios
+
+`tests/macos/interactive_pty.py` is separate from the core contract and requires
+Python 3.9+ with its standard library. Run it after the native gate builds its
+probe; see [`MACOS_VERIFICATION.md`](../MACOS_VERIFICATION.md#optional-interactive-pty-check)
+for selecting a release binary and retaining evidence.
+
+| Case | Expected observation |
+|---|---|
+| Normal input, five repetitions by default | target PID equals PGID and tty foreground group; input bytes are preserved; target exits `37`; original foreground group is restored; caller can read its next input |
+| Terminal Ctrl-C, three repetitions by default | Ctrl-C is sent through the PTY; target result is `130`; original foreground group and subsequent caller input work |
+| Cleanup, every case | driver is reaped; no captured PID/start identity remains; failure cleanup refuses signals when identity cannot be freshly matched |
+
+These cases own an independent controlling terminal and leave the caller's
+terminal unchanged. Their evidence includes host identity and binary/probe
+SHA-256. They cover the observed interactions on the selected host, not every
+possible scheduling order or process that left the initial group.

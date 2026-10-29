@@ -17,7 +17,8 @@ permission:
 
 - macOS: `src/platform/macos*`, `docs/macos/**`, `tests/macos/**`,
   `scripts/macos/**`, `docs/MACOS_VERIFICATION.md`, `scripts/verify-macos.sh`;
-- Linux: `src/platform/linux.rs`, `src/platform/seccomp.rs`, `docs/linux/**`,
+- Linux: `src/platform/linux.rs`, `src/platform/linux/**`,
+  `src/platform/seccomp.rs`, `src/platform/seccomp/**`, `docs/linux/**`,
   `tests/linux/**`, `scripts/linux/**`, `docs/LINUX_VERIFICATION.md`,
   `scripts/verify-linux.sh`;
 - shared: the remaining source, contracts, routing, and static verification.

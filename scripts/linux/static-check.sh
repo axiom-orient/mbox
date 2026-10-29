@@ -16,7 +16,8 @@ fail() {
 
 for path in \
   docs/LINUX_VERIFICATION.md docs/linux/CONTRACT.md docs/linux/SCENARIOS.md \
-  scripts/verify-linux.sh tests/linux/contract.sh \
+  scripts/verify-linux.sh src/platform/linux/bwrap.rs src/platform/linux/mounts.rs \
+  src/platform/seccomp/tests.rs tests/linux/contract.sh \
   tests/linux/helpers/sandbox_probe.rs; do
   [[ -f $path ]] || fail "missing $path"
 done
@@ -26,17 +27,17 @@ for token in \
   '--ro-bind-fd' '--bind-fd' 'O_PATH' 'O_NOFOLLOW' \
   '--disable-userns' '--unshare-pid' '--die-with-parent' \
   'TIOCSTI' 'TIOCLINUX' 'SYS_SOCKET' 'SYS_SENDMSG' 'SYS_RECVMSG'; do
-  grep -Rqs -- "$token" src/platform/linux.rs src/platform/seccomp.rs || \
+  grep -Rqs -- "$token" src/platform/linux.rs src/platform/linux/bwrap.rs src/platform/linux/mounts.rs src/platform/seccomp.rs || \
     fail "missing Linux contract token: $token"
 done
 
 if grep -nE '^[[:space:]]*push\(&mut args, "--new-session"\);' src/platform/linux.rs; then
   fail "--new-session changes the foreground terminal contract"
 fi
-if grep -nE '^[[:space:]]*"/etc",?[[:space:]]*$' src/platform/linux.rs; then
+if grep -nE '^[[:space:]]*"/etc",?[[:space:]]*$' src/platform/linux.rs src/platform/linux/*.rs; then
   fail "ambient full /etc mount detected"
 fi
-if grep -nE '^[[:space:]]*"/usr",?[[:space:]]*$|^[[:space:]]*"/usr/local(/|")' src/platform/linux.rs; then
+if grep -nE '^[[:space:]]*"/usr",?[[:space:]]*$|^[[:space:]]*"/usr/local(/|")' src/platform/linux.rs src/platform/linux/*.rs; then
   fail "ambient full /usr or /usr/local mount detected"
 fi
 if grep -nE '/proc/\$?\{?descendant|kill -0.*descendant' tests/linux/contract.sh; then
@@ -51,9 +52,9 @@ grep -q 'unix-socketpair' tests/linux/contract.sh || fail "missing anonymous IPC
 grep -q 'unix-dgram-sendto' tests/linux/contract.sh || fail "missing pathname-socket send regression"
 grep -q 'tty-query' tests/linux/contract.sh || fail "missing ordinary ioctl regression"
 grep -q 'restrict_sendto_destination' src/platform/seccomp.rs || fail "missing conditional sendto filter"
-grep -q 'writable_descendant_is_mounted_after_readable_parent' src/platform/linux.rs || \
+grep -q 'writable_descendant_is_mounted_after_readable_parent' src/platform/linux/mounts.rs || \
   fail "missing parent-read/child-write mount-order regression"
-grep -q 'Reassert the exact executable as read-only' src/platform/linux.rs || \
+grep -q 'Reassert the exact executable as read-only' src/platform/linux/mounts.rs || \
   fail "missing exact executable pin after writable parents"
 
 grep -qF -- 'TEST_TMP_BASE=${MBOX_TEST_TMPDIR:-/var/tmp}' tests/linux/contract.sh || \
